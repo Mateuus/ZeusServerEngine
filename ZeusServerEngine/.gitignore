@@ -1,0 +1,12 @@
+# Visual Studio / MSBuild
+obj/
+bin/
+*.user
+*.suo
+*.VC.db*
+.vs/
+
+# CMake
+build/
+out/
+cmake-build-*/

@@ -1,0 +1,43 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusCore", "Source\ZeusCore\ZeusCore.vcxproj", "{A6519F9A-435B-4B63-9B9F-2DCE2E78B123}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusPlatform", "Source\ZeusPlatform\ZeusPlatform.vcxproj", "{B7620B1C-546D-4C7E-AF12-3EDF4C88A456}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusRuntime", "Source\ZeusRuntime\ZeusRuntime.vcxproj", "{C8731D2E-657E-4D8F-B023-4FE05D99B567}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusApp", "Source\ZeusApp\ZeusApp.vcxproj", "{D9842E3F-768F-4E90-C134-5AF16E00C678}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A6519F9A-435B-4B63-9B9F-2DCE2E78B123}.Debug|x64.ActiveCfg = Debug|x64
+		{A6519F9A-435B-4B63-9B9F-2DCE2E78B123}.Debug|x64.Build.0 = Debug|x64
+		{A6519F9A-435B-4B63-9B9F-2DCE2E78B123}.Release|x64.ActiveCfg = Release|x64
+		{A6519F9A-435B-4B63-9B9F-2DCE2E78B123}.Release|x64.Build.0 = Release|x64
+		{B7620B1C-546D-4C7E-AF12-3EDF4C88A456}.Debug|x64.ActiveCfg = Debug|x64
+		{B7620B1C-546D-4C7E-AF12-3EDF4C88A456}.Debug|x64.Build.0 = Debug|x64
+		{B7620B1C-546D-4C7E-AF12-3EDF4C88A456}.Release|x64.ActiveCfg = Release|x64
+		{B7620B1C-546D-4C7E-AF12-3EDF4C88A456}.Release|x64.Build.0 = Release|x64
+		{C8731D2E-657E-4D8F-B023-4FE05D99B567}.Debug|x64.ActiveCfg = Debug|x64
+		{C8731D2E-657E-4D8F-B023-4FE05D99B567}.Debug|x64.Build.0 = Debug|x64
+		{C8731D2E-657E-4D8F-B023-4FE05D99B567}.Release|x64.ActiveCfg = Release|x64
+		{C8731D2E-657E-4D8F-B023-4FE05D99B567}.Release|x64.Build.0 = Release|x64
+		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Debug|x64.ActiveCfg = Debug|x64
+		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Debug|x64.Build.0 = Debug|x64
+		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Release|x64.ActiveCfg = Release|x64
+		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {E0953F40-8790-4FA1-D245-6BF27F11D789}
+	EndGlobalSection
+EndGlobal

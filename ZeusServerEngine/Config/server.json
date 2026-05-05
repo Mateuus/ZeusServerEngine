@@ -1,0 +1,6 @@
+{
+  "TargetTPS": 30,
+  "LogLevel": "Info",
+  "SessionLogDir": "Logs",
+  "DebugOverlayRows": 0
+}
