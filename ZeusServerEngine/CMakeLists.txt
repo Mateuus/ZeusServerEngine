@@ -14,7 +14,46 @@ set(ZEUS_SESSION_PUBLIC ${ZEUS_ROOT}/Source/ZeusSession/Public)
 set(ZEUS_RUNTIME_PUBLIC ${ZEUS_ROOT}/Source/ZeusRuntime/Public)
 set(ZEUS_MATH_PUBLIC ${ZEUS_ROOT}/Source/ZeusMath/Public)
 set(ZEUS_WORLD_PUBLIC ${ZEUS_ROOT}/Source/ZeusWorld/Public)
+set(ZEUS_COLLISION_PUBLIC ${ZEUS_ROOT}/Source/ZeusCollision/Public)
 set(ZEUS_APP_PUBLIC ${ZEUS_ROOT}/Source/ZeusApp/Public)
+
+option(ZEUS_USE_JOLT "Enable Jolt Physics integration in ZeusCollision." ON)
+
+if(ZEUS_USE_JOLT)
+    include(FetchContent)
+
+    # Disable Jolt's own samples / tests / viewer / hello world to keep the build
+    # focused on the static lib. Keep float precision (DOUBLE_PRECISION=OFF) to
+    # avoid contaminating ZeusMath; cm <-> m happens in JoltConversion.
+    set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+    set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+    set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+    set(DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
+    set(OBJECT_LAYER_BITS 16 CACHE STRING "" FORCE)
+    set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+    set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+    set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(USE_AVX2 OFF CACHE BOOL "" FORCE)
+    set(USE_AVX OFF CACHE BOOL "" FORCE)
+    set(USE_SSE4_2 OFF CACHE BOOL "" FORCE)
+    set(USE_SSE4_1 OFF CACHE BOOL "" FORCE)
+    set(USE_LZCNT OFF CACHE BOOL "" FORCE)
+    set(USE_TZCNT OFF CACHE BOOL "" FORCE)
+    set(USE_F16C OFF CACHE BOOL "" FORCE)
+    set(USE_FMADD OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        JoltPhysics
+        GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+        GIT_TAG v5.5.0
+        SOURCE_SUBDIR Build
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(JoltPhysics)
+endif()
 
 add_library(ZeusCore STATIC
     Source/ZeusCore/Private/ZeusCoreStub.cpp
@@ -127,6 +166,33 @@ target_include_directories(ZeusWorld PUBLIC
 )
 target_link_libraries(ZeusWorld PUBLIC ZeusCore ZeusMath ZeusRuntime)
 
+# ---- ZeusCollision -----------------------------------------------------------
+add_library(ZeusCollision STATIC
+    Source/ZeusCollision/Private/ZsmCollisionLoader.cpp
+    Source/ZeusCollision/Private/CollisionDebug.cpp
+    Source/ZeusCollision/Private/CollisionWorld.cpp
+    Source/ZeusCollision/Private/CollisionTestScene.cpp
+)
+target_include_directories(ZeusCollision PUBLIC
+    ${ZEUS_COLLISION_PUBLIC}
+    ${ZEUS_CORE_PUBLIC}
+    ${ZEUS_MATH_PUBLIC}
+    ${ZEUS_PLATFORM_PUBLIC}
+)
+target_link_libraries(ZeusCollision PUBLIC ZeusCore ZeusMath ZeusPlatform)
+
+if(ZEUS_USE_JOLT)
+    target_sources(ZeusCollision PRIVATE
+        Source/ZeusCollision/Private/JoltConversion.cpp
+        Source/ZeusCollision/Private/JoltShapeFactory.cpp
+        Source/ZeusCollision/Private/PhysicsWorld.cpp
+    )
+    target_link_libraries(ZeusCollision PUBLIC Jolt)
+    target_compile_definitions(ZeusCollision PUBLIC ZEUS_HAS_JOLT=1)
+else()
+    target_compile_definitions(ZeusCollision PUBLIC ZEUS_HAS_JOLT=0)
+endif()
+
 add_executable(ZeusServer
     Source/ZeusApp/Private/main.cpp
     Source/ZeusApp/Private/CoreServerApp.cpp
@@ -141,8 +207,9 @@ target_include_directories(ZeusServer PRIVATE
     ${ZEUS_RUNTIME_PUBLIC}
     ${ZEUS_MATH_PUBLIC}
     ${ZEUS_WORLD_PUBLIC}
+    ${ZEUS_COLLISION_PUBLIC}
 )
-target_link_libraries(ZeusServer PRIVATE ZeusWorld ZeusMath ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
+target_link_libraries(ZeusServer PRIVATE ZeusCollision ZeusWorld ZeusMath ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
 
 if(UNIX AND NOT APPLE)
     target_compile_definitions(ZeusPlatform PRIVATE _GNU_SOURCE)

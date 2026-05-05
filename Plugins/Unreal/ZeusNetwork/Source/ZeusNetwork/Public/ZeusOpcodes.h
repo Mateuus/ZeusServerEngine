@@ -17,5 +17,7 @@ enum class EZeusOpcode : uint16
 	S_PONG = 1011,
 
 	C_DISCONNECT = 1020,
-	S_DISCONNECT_OK = 1021
+	S_DISCONNECT_OK = 1021,
+
+	S_TRAVEL_TO_MAP = 1040
 };

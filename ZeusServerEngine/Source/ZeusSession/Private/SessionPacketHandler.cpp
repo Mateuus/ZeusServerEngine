@@ -93,6 +93,8 @@ std::string OpcodeName(const std::uint16_t op)
         return "C_LOADING_FRAGMENT";
     case Zeus::Protocol::EOpcode::S_LOADING_ASSEMBLED_OK:
         return "S_LOADING_ASSEMBLED_OK";
+    case Zeus::Protocol::EOpcode::S_TRAVEL_TO_MAP:
+        return "S_TRAVEL_TO_MAP";
     case Zeus::Protocol::EOpcode::C_TEST_RELIABLE:
         return "C_TEST_RELIABLE";
     case Zeus::Protocol::EOpcode::S_TEST_RELIABLE:
@@ -423,6 +425,29 @@ void SessionPacketHandler::OnDatagram(
             ZeusLog::Info(
                 "Net",
                 std::string("Sent S_CONNECT_OK connectionId=") + std::to_string(ok.connectionId) + " sessionId=" + std::to_string(ok.sessionId) + " (idempotent)");
+            if (!travelMapName_.empty() || !travelMapPath_.empty())
+            {
+                Zeus::Protocol::TravelToMapPayload travel{};
+                travel.mapName = travelMapName_;
+                travel.mapPath = travelMapPath_;
+                travel.serverTimeMs = serverWallTimeMs;
+                (void)SendOne(
+                    udp,
+                    from,
+                    nc,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TRAVEL_TO_MAP),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    ok.connectionId,
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    false,
+                    packetStats_,
+                    [&travel](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteTravelToMapPayload(w, travel); });
+                ZeusLog::Info(
+                    "Session",
+                    std::string("Sent S_TRAVEL_TO_MAP map=").append(travel.mapName).append(" path=").append(travel.mapPath).append(" (idempotent)"));
+            }
             return;
         }
 
@@ -717,6 +742,29 @@ void SessionPacketHandler::OnDatagram(
         ZeusLog::Info(
             "Session",
             std::string("Connected sessionId=") + std::to_string(session->GetSessionId()) + " connectionId=" + std::to_string(nc->GetConnectionId()));
+        if (!travelMapName_.empty() || !travelMapPath_.empty())
+        {
+            Zeus::Protocol::TravelToMapPayload travel{};
+            travel.mapName = travelMapName_;
+            travel.mapPath = travelMapPath_;
+            travel.serverTimeMs = serverWallTimeMs;
+            (void)SendOne(
+                udp,
+                from,
+                nc,
+                static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TRAVEL_TO_MAP),
+                Zeus::Protocol::ENetChannel::Loading,
+                Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                ok.connectionId,
+                nowMonotonicSeconds,
+                serverWallTimeMs,
+                false,
+                packetStats_,
+                [&travel](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteTravelToMapPayload(w, travel); });
+            ZeusLog::Info(
+                "Session",
+                std::string("Sent S_TRAVEL_TO_MAP map=").append(travel.mapName).append(" path=").append(travel.mapPath));
+        }
         return;
     }
 

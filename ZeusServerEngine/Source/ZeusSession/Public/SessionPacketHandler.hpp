@@ -4,6 +4,7 @@
 #include "SessionNetworkSettings.hpp"
 
 #include <cstdint>
+#include <string>
 
 namespace Zeus::Net
 {
@@ -27,6 +28,18 @@ public:
     void SetNetworkDiagnostics(Zeus::Net::NetworkDiagnostics* diag) { networkDiagnostics_ = diag; }
 
     void Configure(const SessionNetworkSettings& settings) { settings_ = settings; }
+
+    /** Define o destino de mapa anunciado em S_TRAVEL_TO_MAP logo apos S_CONNECT_OK.
+        mapName e o nome logico (ex.: "TestWorld") e mapPath e o caminho Unreal completo
+        (ex.: "/Game/ThirdPerson/TestWorld"); ambos podem estar vazios para desactivar. */
+    void SetTravelInfo(std::string mapName, std::string mapPath)
+    {
+        travelMapName_ = std::move(mapName);
+        travelMapPath_ = std::move(mapPath);
+    }
+
+    const std::string& GetTravelMapName() const { return travelMapName_; }
+    const std::string& GetTravelMapPath() const { return travelMapPath_; }
 
     void OnDatagram(
         Zeus::Net::UdpServer& udp,
@@ -54,5 +67,7 @@ private:
     Zeus::Net::PacketStats* packetStats_ = nullptr;
     Zeus::Net::NetworkDiagnostics* networkDiagnostics_ = nullptr;
     SessionNetworkSettings settings_{};
+    std::string travelMapName_;
+    std::string travelMapPath_;
 };
 } // namespace Zeus::Session

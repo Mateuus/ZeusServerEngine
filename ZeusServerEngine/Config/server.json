@@ -4,6 +4,10 @@
   "SessionLogDir": "Logs",
   "DebugOverlayRows": 0,
   "WorldDefaultMap": "TestWorld",
+  "WorldClientMapPathByName": {
+    "TestWorld": "/Game/ThirdPerson/TestWorld",
+    "Lobby": "/Game/ThirdPerson/Lobby"
+  },
   "WorldDebugSpawnActors": false,
   "ListenUdpPort": 27777,
   "NetSimDropPermille": 0,
@@ -15,5 +19,12 @@
   "MaxReassemblyBytes": 4194304,
   "ReassemblyTimeoutMs": 60000,
   "MaxOrderedPendingPerChannel": 64,
-  "MaxOrderedGap": 128
+  "MaxOrderedGap": 128,
+  "Collision": {
+    "EnableCollisionWorld": false,
+    "RunCollisionSmokeTest": false,
+    "CollisionFileByMap": {
+      "TestWorld": "Data/Maps/TestWorld/static_collision.zsm"
+    }
+  }
 }

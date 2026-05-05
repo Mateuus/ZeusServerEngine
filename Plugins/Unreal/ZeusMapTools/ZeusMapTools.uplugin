@@ -1,0 +1,19 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Zeus Map Tools",
+  "Description": "Editor tools and commandlet for exporting Unreal maps/collision to Zeus Server Engine.",
+  "Category": "Zeus",
+  "CreatedBy": "Zeus Server Engine",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "ZeusMapTools",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

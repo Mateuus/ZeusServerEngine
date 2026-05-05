@@ -14,6 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FZeusOnConnectionFailed, FString, Re
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FZeusOnDisconnected);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FZeusOnPingUpdated, float, RttMs);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FZeusOnNetworkLog, FString, Message);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FZeusOnServerTravelRequested, const FString&, MapName, const FString&, MapPath);
 
 UCLASS()
 class ZEUSNETWORK_API UZeusNetworkSubsystem : public UGameInstanceSubsystem
@@ -75,6 +76,10 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Zeus|Network")
 	FZeusOnNetworkLog OnNetworkLog;
+
+	/** Disparado quando o servidor envia S_TRAVEL_TO_MAP (logo apos o handshake). MapPath e o caminho Unreal completo (ex.: "/Game/ThirdPerson/TestWorld"). */
+	UPROPERTY(BlueprintAssignable, Category = "Zeus|Network")
+	FZeusOnServerTravelRequested OnServerTravelRequested;
 
 private:
 	bool PollTick(float DeltaTime);

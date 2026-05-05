@@ -18,6 +18,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusMath", "Source\ZeusMath
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusWorld", "Source\ZeusWorld\ZeusWorld.vcxproj", "{F2F3F4F5-F6F7-48A1-B2C3-D4E5F6A70891}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusCollision", "Source\ZeusCollision\ZeusCollision.vcxproj", "{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZeusApp", "Source\ZeusApp\ZeusApp.vcxproj", "{D9842E3F-768F-4E90-C134-5AF16E00C678}"
 EndProject
 Global
@@ -58,6 +60,10 @@ Global
 		{F2F3F4F5-F6F7-48A1-B2C3-D4E5F6A70891}.Debug|x64.Build.0 = Debug|x64
 		{F2F3F4F5-F6F7-48A1-B2C3-D4E5F6A70891}.Release|x64.ActiveCfg = Release|x64
 		{F2F3F4F5-F6F7-48A1-B2C3-D4E5F6A70891}.Release|x64.Build.0 = Release|x64
+		{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}.Debug|x64.ActiveCfg = Debug|x64
+		{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}.Debug|x64.Build.0 = Debug|x64
+		{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}.Release|x64.ActiveCfg = Release|x64
+		{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}.Release|x64.Build.0 = Release|x64
 		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Debug|x64.ActiveCfg = Debug|x64
 		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Debug|x64.Build.0 = Debug|x64
 		{D9842E3F-768F-4E90-C134-5AF16E00C678}.Release|x64.ActiveCfg = Release|x64
