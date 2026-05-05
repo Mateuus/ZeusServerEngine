@@ -48,6 +48,7 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 | `C_PING` / `S_PONG` | `Gameplay` | `Unreliable` (ou `UnreliableSequenced`) |
 | `C_DISCONNECT` / `S_DISCONNECT_OK` | `Gameplay` | `Reliable` ou `ReliableOrdered` |
 | `C_LOADING_FRAGMENT` / `S_LOADING_ASSEMBLED_OK` | `Loading` | `ReliableOrdered` |
+| `S_TRAVEL_TO_MAP` | `Loading` | `ReliableOrdered` |
 
 ### `flags` no cabeçalho
 
@@ -65,8 +66,9 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 2. Servidor cria `NetConnection` e `ClientSession` em estado **`Connecting`**, envia `S_CONNECT_CHALLENGE` (`serverNonce`, `connectionId` no payload).
 3. Cliente responde `C_CONNECT_RESPONSE` (`clientNonce` do pedido + `serverNonce` do challenge), `ReliableOrdered` no canal `Loading`, `connectionId` no cabeçalho igual ao recebido no challenge.
 4. Servidor valida nonces e ordenação `ReliableOrdered` no canal `Loading`, passa a sessão a **`Connected`**, envia `S_CONNECT_OK`.
+4a. Imediatamente a seguir, o servidor envia `S_TRAVEL_TO_MAP` (`mapName`, `mapPath`, `serverTimeMs`) — também no canal `Loading` com `ReliableOrdered` — para indicar ao cliente o mapa Unreal autoritativo. Ver [MAP_TRAVEL.md](MAP_TRAVEL.md).
 5. **`C_CONNECT_RESPONSE` inválido** (payload ilegível ou nonces incoerentes com a sessão em `Connecting`): o servidor envia `S_CONNECT_REJECT` (`InvalidPacket` ou `InvalidHandshake`) e remove sessão + conexão.
-6. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (útil com perda UDP).
+6. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (e o mesmo `S_TRAVEL_TO_MAP`, útil com perda UDP).
 7. Sessões em estado **`Connecting`** no mesmo endpoint: novo `C_CONNECT_REQUEST` válido **reenvia o mesmo challenge** (mesmo `serverNonce`), atualizando o `clientNonce` do pedido.
 
 ### Payload `C_CONNECT_REQUEST`

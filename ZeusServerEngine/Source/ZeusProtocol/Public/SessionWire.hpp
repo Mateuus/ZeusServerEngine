@@ -78,6 +78,13 @@ struct LoadingAssembledOkPayload
     std::uint64_t snapshotId = 0;
 };
 
+struct TravelToMapPayload
+{
+    std::string mapName;
+    std::string mapPath;
+    std::uint64_t serverTimeMs = 0;
+};
+
 ZeusResult ReadConnectRequestPayload(const std::uint8_t* payload, std::size_t payloadSize, ConnectRequestPayload& out);
 ZeusResult WriteConnectRequestPayload(PacketWriter& w, const ConnectRequestPayload& in);
 
@@ -110,4 +117,7 @@ ZeusResult WriteLoadingFragmentPayload(PacketWriter& w, const LoadingFragmentPay
 
 ZeusResult ReadLoadingAssembledOkPayload(const std::uint8_t* payload, std::size_t payloadSize, LoadingAssembledOkPayload& out);
 ZeusResult WriteLoadingAssembledOkPayload(PacketWriter& w, const LoadingAssembledOkPayload& in);
+
+ZeusResult ReadTravelToMapPayload(const std::uint8_t* payload, std::size_t payloadSize, TravelToMapPayload& out);
+ZeusResult WriteTravelToMapPayload(PacketWriter& w, const TravelToMapPayload& in);
 } // namespace Zeus::Protocol

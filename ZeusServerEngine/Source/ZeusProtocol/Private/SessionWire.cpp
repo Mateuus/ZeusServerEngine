@@ -296,4 +296,36 @@ ZeusResult WriteLoadingAssembledOkPayload(PacketWriter& w, const LoadingAssemble
 {
     return w.WriteUInt64(in.snapshotId);
 }
+
+ZeusResult ReadTravelToMapPayload(const std::uint8_t* payload, const std::size_t payloadSize, TravelToMapPayload& out)
+{
+    return ReadPayloadReader(payload, payloadSize, [&out](PacketReader& r) -> ZeusResult {
+        ZeusResult a = r.ReadString(out.mapName);
+        if (!a.Ok())
+        {
+            return a;
+        }
+        ZeusResult b = r.ReadString(out.mapPath);
+        if (!b.Ok())
+        {
+            return b;
+        }
+        return r.ReadUInt64(out.serverTimeMs);
+    });
+}
+
+ZeusResult WriteTravelToMapPayload(PacketWriter& w, const TravelToMapPayload& in)
+{
+    ZeusResult a = w.WriteString(in.mapName);
+    if (!a.Ok())
+    {
+        return a;
+    }
+    ZeusResult b = w.WriteString(in.mapPath);
+    if (!b.Ok())
+    {
+        return b;
+    }
+    return w.WriteUInt64(in.serverTimeMs);
+}
 } // namespace Zeus::Protocol

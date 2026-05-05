@@ -533,11 +533,31 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
     std::string defaultMap = "TestWorld";
     (void)ParseJsonStringValue(json, "WorldDefaultMap", defaultMap);
 
+    std::unordered_map<std::string, std::string> worldClientMapPathByName;
+    (void)ParseJsonFlatStringObject(json, "WorldClientMapPathByName", worldClientMapPathByName);
+
+    std::string clientMapPath;
+    {
+        const auto itMapPath = worldClientMapPathByName.find(defaultMap);
+        if (itMapPath != worldClientMapPathByName.end())
+        {
+            clientMapPath = itMapPath->second;
+        }
+    }
+
     Zeus::World::MapInstance* mainMap = impl_->worldRuntime->CreateMapInstance(defaultMap);
     if (mainMap != nullptr)
     {
+        if (!clientMapPath.empty())
+        {
+            mainMap->SetClientMapPath(clientMapPath);
+        }
         mainMap->BeginPlay();
     }
+
+    impl_->sessionPacketHandler.SetTravelInfo(defaultMap, clientMapPath);
+    ZeusLog::Info("World",
+        std::string("World map resolved name=").append(defaultMap).append(" clientPath=").append(clientMapPath.empty() ? "<empty>" : clientMapPath));
 
     bool worldDebugSpawnActors = false;
     (void)ParseJsonBoolValue(json, "WorldDebugSpawnActors", worldDebugSpawnActors);

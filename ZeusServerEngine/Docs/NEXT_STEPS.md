@@ -1,5 +1,13 @@
 # Próximos passos — Zeus Server Engine (rede e além)
 
+## Concluído (Map Travel pós-handshake)
+
+- Novo opcode `S_TRAVEL_TO_MAP = 1040` (servidor → cliente) com payload `mapName + mapPath + serverTimeMs`.
+- Servidor envia logo após `S_CONNECT_OK` (caminho final + idempotente).
+- `MapInstance::ClientMapPath` + config `WorldClientMapPathByName` em `server.json`.
+- Cliente Unreal: delegate `OnServerTravelRequested`, `UZClientMMOGameInstance` faz `OpenLevel`. `GameDefaultMap=/Game/ThirdPerson/Lobby.Lobby`.
+- Documentação: [MAP_TRAVEL.md](MAP_TRAVEL.md). ADR **0012** em `.brain/decisoes/adrs/`.
+
 ## Em curso (Parte 4 — Collision Foundation)
 
 - Plugin Editor **`ZeusMapTools`** em `Server/Plugins/Unreal/ZeusMapTools/` (menu Slate + commandlet `ZeusMapExport`): export de simple collision (`UBodySetup::AggGeom`) para `debug_collision.json` + `static_collision.zsm` (formato `ZSMC` v1).

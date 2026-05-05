@@ -4,6 +4,10 @@
   "SessionLogDir": "Logs",
   "DebugOverlayRows": 0,
   "WorldDefaultMap": "TestWorld",
+  "WorldClientMapPathByName": {
+    "TestWorld": "/Game/ThirdPerson/TestWorld",
+    "Lobby": "/Game/ThirdPerson/Lobby"
+  },
   "WorldDebugSpawnActors": false,
   "ListenUdpPort": 27777,
   "NetSimDropPermille": 0,

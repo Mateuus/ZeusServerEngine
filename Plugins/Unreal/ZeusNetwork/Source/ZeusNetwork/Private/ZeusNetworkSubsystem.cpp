@@ -503,6 +503,20 @@ void UZeusNetworkSubsystem::HandleIncomingPacket(const TArray<uint8>& Wire)
 		CompleteDisconnectLocal();
 		break;
 	}
+	case EZeusOpcode::S_TRAVEL_TO_MAP:
+	{
+		FString MapName;
+		FString MapPath;
+		uint64 SrvTime = 0;
+		if (!Reader.ReadStringUtf8(MapName) || !Reader.ReadStringUtf8(MapPath) || !Reader.ReadUInt64(SrvTime))
+		{
+			UE_LOG(LogZeusNetwork, Warning, TEXT("[ZeusNetwork] Invalid S_TRAVEL_TO_MAP payload"));
+			return;
+		}
+		EmitLog(FString::Printf(TEXT("S_TRAVEL_TO_MAP map=%s path=%s"), *MapName, *MapPath));
+		OnServerTravelRequested.Broadcast(MapName, MapPath);
+		break;
+	}
 	default:
 		break;
 	}

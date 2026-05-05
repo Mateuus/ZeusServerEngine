@@ -23,6 +23,8 @@ enum class EOpcode : std::uint16_t
     C_LOADING_FRAGMENT = 1030,
     S_LOADING_ASSEMBLED_OK = 1031,
 
+    S_TRAVEL_TO_MAP = 1040,
+
     C_TEST_RELIABLE = 1100,
     S_TEST_RELIABLE = 1101,
 
