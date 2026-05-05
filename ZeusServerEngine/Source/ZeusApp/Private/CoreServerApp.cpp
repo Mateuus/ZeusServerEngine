@@ -1,8 +1,11 @@
 #include "CoreServerApp.hpp"
 
 #include "EngineLoop.hpp"
+#include "NetworkDiagnostics.hpp"
+#include "NetworkSimulator.hpp"
 #include "NetConnectionManager.hpp"
 #include "PacketParser.hpp"
+#include "PacketStats.hpp"
 #include "PlatformConsoleLive.hpp"
 #include "PlatformTime.hpp"
 #include "SessionManager.hpp"
@@ -180,6 +183,9 @@ struct CoreServerApp::Impl
     Zeus::Net::NetConnectionManager netConnections;
     Zeus::Session::SessionManager sessions;
     Zeus::Session::SessionPacketHandler sessionPacketHandler;
+    Zeus::Net::PacketStats netStats{};
+    Zeus::Net::NetworkDiagnostics netDiag{};
+    Zeus::Net::NetworkSimulator netSim{};
     int targetTps = 30;
     bool initialized = false;
     bool shutDownDone = false;
@@ -247,6 +253,9 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
     impl_->initialized = true;
     impl_->shutDownDone = false;
 
+    impl_->sessionPacketHandler.SetPacketStats(&impl_->netStats);
+    impl_->sessionPacketHandler.SetNetworkDiagnostics(&impl_->netDiag);
+
 #if defined(_WIN32)
     g_consoleHandlerApp = this;
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
@@ -284,6 +293,20 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
 
     int listenUdp = 0;
     (void)ParseJsonIntValue(json, "ListenUdpPort", listenUdp);
+    int netSimDropPermille = 0;
+    (void)ParseJsonIntValue(json, "NetSimDropPermille", netSimDropPermille);
+    if (netSimDropPermille < 0)
+    {
+        netSimDropPermille = 0;
+    }
+    if (netSimDropPermille > 1000)
+    {
+        netSimDropPermille = 1000;
+    }
+    impl_->netSim.Configure(
+        static_cast<std::uint16_t>(netSimDropPermille),
+        static_cast<std::uint32_t>(listenUdp > 0 ? listenUdp : 1));
+
     if (listenUdp > 0 && listenUdp <= 65535)
     {
         impl_->udp = std::make_unique<Zeus::Net::UdpServer>();
@@ -306,10 +329,16 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
                 const double nowMono = Zeus::Platform::NowMonotonicSeconds();
                 const std::uint64_t wallMs = Zeus::Platform::NowUnixEpochMilliseconds();
                 impl_->udp->PumpReceive([this, nowMono, wallMs](const std::uint8_t* data, const std::size_t n, const Zeus::Net::UdpEndpoint& from) {
+                    if (impl_->netSim.ShouldDropInbound())
+                    {
+                        ++impl_->netStats.DatagramsSimDropped;
+                        return;
+                    }
                     Zeus::Protocol::PacketParser::Output parsed{};
                     const ZeusResult pr = Zeus::Protocol::PacketParser::Parse(data, n, false, parsed);
                     if (!pr.Ok())
                     {
+                        ++impl_->netStats.DatagramsRejectedParse;
                         return;
                     }
                     impl_->sessionPacketHandler.OnDatagram(
@@ -321,6 +350,7 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
                         parsed,
                         from);
                 });
+                impl_->sessionPacketHandler.OnTickPostNetwork(*impl_->udp, impl_->netConnections, nowMono, wallMs);
                 impl_->sessionPacketHandler.OnTickTimeouts(impl_->netConnections, impl_->sessions, nowMono);
             });
         }

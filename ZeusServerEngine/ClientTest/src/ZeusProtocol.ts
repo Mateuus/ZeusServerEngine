@@ -10,7 +10,7 @@ export function magicToUInt32(): number {
   return Number(ZEUS_PACKET_MAGIC & 0xffffffffn) >>> 0;
 }
 
-export const ZEUS_PROTOCOL_VERSION = 1;
+export const ZEUS_PROTOCOL_VERSION = 2;
 export const ZEUS_WIRE_HEADER_BYTES = 32;
 export const ZEUS_MAX_PACKET_BYTES = 1200;
 
@@ -33,10 +33,14 @@ export const enum EOpcode {
   C_CONNECT_REQUEST = 1000,
   S_CONNECT_OK = 1001,
   S_CONNECT_REJECT = 1002,
+  S_CONNECT_CHALLENGE = 1003,
+  C_CONNECT_RESPONSE = 1004,
   C_PING = 1010,
   S_PONG = 1011,
   C_DISCONNECT = 1020,
   S_DISCONNECT_OK = 1021,
+  C_LOADING_FRAGMENT = 1030,
+  S_LOADING_ASSEMBLED_OK = 1031,
 }
 
 export const enum ConnectRejectReason {

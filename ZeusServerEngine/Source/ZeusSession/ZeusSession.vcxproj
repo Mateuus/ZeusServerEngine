@@ -88,12 +88,14 @@
   <ItemGroup>
     <ClCompile Include="Private\ClientSession.cpp" />
     <ClCompile Include="Private\SessionManager.cpp" />
+    <ClCompile Include="Private\SessionOpcodeRules.cpp" />
     <ClCompile Include="Private\SessionPacketHandler.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Public\ClientSession.hpp" />
     <ClInclude Include="Public\SessionEvents.hpp" />
     <ClInclude Include="Public\SessionManager.hpp" />
+    <ClInclude Include="Public\SessionOpcodeRules.hpp" />
     <ClInclude Include="Public\SessionPacketHandler.hpp" />
     <ClInclude Include="Public\SessionState.hpp" />
   </ItemGroup>

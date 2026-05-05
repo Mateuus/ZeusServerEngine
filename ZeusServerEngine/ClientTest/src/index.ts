@@ -41,6 +41,10 @@ class ZeusUdpClient {
   sessionId = 0n;
   private lastAck = 0;
   private lastAckBits = 0;
+  private connectClientNonce = 0n;
+  private pendingServerChallenge = 0n;
+  /** `ReliableOrdered` / sequenciamento por canal (espelha `NetConnection::NextReliableOrderId`). */
+  private orderIdByChannel: number[] = [0, 0, 0, 0, 0];
 
   constructor(
     private readonly host: string,
@@ -89,11 +93,19 @@ class ZeusUdpClient {
     });
   }
 
+  private nextOrderFlags(channel: ENetChannel): number {
+    const ch = channel as number;
+    const v = this.orderIdByChannel[ch]! & 0xffff;
+    this.orderIdByChannel[ch] = (this.orderIdByChannel[ch]! + 1) & 0xffff;
+    return v;
+  }
+
   private buildHeaderBase(
     opcode: number,
     channel: ENetChannel,
     delivery: ENetDelivery,
     connId: number,
+    flagsOverride?: number,
   ): {
     opcode: number;
     channel: ENetChannel;
@@ -105,6 +117,9 @@ class ZeusUdpClient {
     flags: number;
   } {
     const seq = this.nextSeq++;
+    const useOrdered =
+      delivery === ENetDelivery.ReliableOrdered || delivery === ENetDelivery.UnreliableSequenced;
+    const flags = useOrdered ? this.nextOrderFlags(channel) : (flagsOverride ?? 0);
     return {
       opcode,
       channel,
@@ -113,7 +128,7 @@ class ZeusUdpClient {
       ack: this.lastAck,
       ackBits: this.lastAckBits,
       connectionId: connId >>> 0,
-      flags: 0,
+      flags,
     };
   }
 
@@ -128,12 +143,28 @@ class ZeusUdpClient {
     const w = builder.payloadWriter();
     w.writeUInt16(ZEUS_PROTOCOL_VERSION);
     w.writeStringUtf8("ClientTest/0.0.1");
-    w.writeUInt64(BigInt(Date.now()));
+    this.connectClientNonce = BigInt(Date.now());
+    w.writeUInt64(this.connectClientNonce);
     const header = this.buildHeaderBase(
       EOpcode.C_CONNECT_REQUEST,
       ENetChannel.Loading,
-      ENetDelivery.ReliableOrdered,
+      ENetDelivery.Reliable,
       0,
+    );
+    return builder.finalize(header);
+  }
+
+  sendConnectResponse(): Buffer {
+    const builder = new ZeusPacketBuilder();
+    builder.reset();
+    const w = builder.payloadWriter();
+    w.writeUInt64(this.connectClientNonce);
+    w.writeUInt64(this.pendingServerChallenge);
+    const header = this.buildHeaderBase(
+      EOpcode.C_CONNECT_RESPONSE,
+      ENetChannel.Loading,
+      ENetDelivery.ReliableOrdered,
+      this.connectionId,
     );
     return builder.finalize(header);
   }
@@ -167,7 +198,13 @@ class ZeusUdpClient {
     this.updateAckFromServer(parsed.header);
     const op = parsed.header.opcode;
     const pr = new ZeusPacketReader(parsed.payload, parsed.payload.length);
-    if (op === EOpcode.S_CONNECT_OK) {
+    if (op === EOpcode.S_CONNECT_CHALLENGE) {
+      this.pendingServerChallenge = pr.readUInt64();
+      this.connectionId = pr.readUInt32() >>> 0;
+      console.log(
+        `[Client] S_CONNECT_CHALLENGE serverNonce=${this.pendingServerChallenge.toString()} connectionId=${this.connectionId}`,
+      );
+    } else if (op === EOpcode.S_CONNECT_OK) {
       this.connectionId = pr.readUInt32() >>> 0;
       this.sessionId = pr.readUInt64();
       const serverTimeMs = pr.readUInt64();
@@ -190,6 +227,9 @@ class ZeusUdpClient {
     } else if (op === EOpcode.S_DISCONNECT_OK) {
       const serverTime = pr.readUInt64();
       console.log(`[Client] S_DISCONNECT_OK serverTimeMs=${serverTime.toString()}`);
+    } else if (op === EOpcode.S_LOADING_ASSEMBLED_OK) {
+      const sid = pr.readUInt64();
+      console.log(`[Client] S_LOADING_ASSEMBLED_OK snapshotId=${sid.toString()}`);
     } else {
       console.log(`[Client] Unhandled opcode ${op}`);
     }
@@ -200,8 +240,15 @@ async function doConnect(client: ZeusUdpClient): Promise<void> {
   const buf = client.sendConnectRequest();
   console.log("[Client] Sending C_CONNECT_REQUEST");
   client.sendRaw(buf);
-  const reply = await client.waitOneMessage(3000);
-  client.parseServerMessage(reply);
+  const reply1 = await client.waitOneMessage(3000);
+  client.parseServerMessage(reply1);
+  const h1 = parsePacket(reply1).header;
+  if (h1.opcode === EOpcode.S_CONNECT_CHALLENGE) {
+    console.log("[Client] Sending C_CONNECT_RESPONSE");
+    client.sendRaw(client.sendConnectResponse());
+    const reply2 = await client.waitOneMessage(3000);
+    client.parseServerMessage(reply2);
+  }
 }
 
 async function doPing(client: ZeusUdpClient): Promise<void> {

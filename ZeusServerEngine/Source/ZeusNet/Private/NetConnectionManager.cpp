@@ -1,5 +1,8 @@
 #include "NetConnectionManager.hpp"
 
+#include "PacketStats.hpp"
+#include "UdpServer.hpp"
+
 namespace Zeus::Net
 {
 namespace
@@ -95,6 +98,35 @@ void NetConnectionManager::UpdateTimeouts(
     {
         removedOut.push_back(id);
         RemoveConnection(id);
+    }
+}
+
+void NetConnectionManager::FlushAllOutbound(
+    UdpServer& udp,
+    const std::uint32_t budgetBytes,
+    const std::uint64_t wallTimeMs,
+    const double nowMonotonicSeconds,
+    PacketStats* stats)
+{
+    std::uint32_t remaining = budgetBytes;
+    for (auto& kv : byId_)
+    {
+        if (remaining == 0)
+        {
+            break;
+        }
+        remaining -= kv.second->FlushOutboundQueues(udp, remaining, wallTimeMs, nowMonotonicSeconds, stats);
+    }
+}
+
+void NetConnectionManager::TickAllReliabilityResends(
+    UdpServer& udp,
+    const std::uint64_t wallTimeMs,
+    PacketStats* stats)
+{
+    for (auto& kv : byId_)
+    {
+        kv.second->TickReliabilityResends(udp, wallTimeMs, stats);
     }
 }
 } // namespace Zeus::Net

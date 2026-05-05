@@ -10,7 +10,7 @@ inline constexpr std::uint32_t ZEUS_PACKET_MAGIC =
     (static_cast<std::uint32_t>('Z')) | (static_cast<std::uint32_t>('E') << 8) |
     (static_cast<std::uint32_t>('U') << 16) | (static_cast<std::uint32_t>('S') << 24);
 
-inline constexpr std::uint16_t ZEUS_PROTOCOL_VERSION = 1;
+inline constexpr std::uint16_t ZEUS_PROTOCOL_VERSION = 2;
 
 /** Tamanho fixo do cabeçalho binário na Parte 2 (wire LE). */
 inline constexpr std::size_t ZEUS_WIRE_HEADER_BYTES = 32;

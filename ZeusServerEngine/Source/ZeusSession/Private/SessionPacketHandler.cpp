@@ -1,5 +1,6 @@
 #include "SessionPacketHandler.hpp"
 
+#include "ChannelConfig.hpp"
 #include "ClientSession.hpp"
 #include "ConnectRejectReason.hpp"
 #include "NetChannel.hpp"
@@ -11,7 +12,10 @@
 #include "PacketBuilder.hpp"
 #include "PacketConstants.hpp"
 #include "PacketHeader.hpp"
+#include "SendQueue.hpp"
+#include "NetworkDiagnostics.hpp"
 #include "SessionManager.hpp"
+#include "SessionOpcodeRules.hpp"
 #include "SessionState.hpp"
 #include "SessionWire.hpp"
 #include "UdpEndpoint.hpp"
@@ -21,6 +25,7 @@
 #include <functional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace Zeus::Session
 {
@@ -28,6 +33,16 @@ namespace
 {
 constexpr std::uint32_t kHeartbeatIntervalMs = 5000;
 constexpr double kConnectionIdleTimeoutSeconds = 30.0;
+
+[[nodiscard]] bool IsReliableDelivery(const Zeus::Protocol::ENetDelivery d)
+{
+    return d == Zeus::Protocol::ENetDelivery::Reliable || d == Zeus::Protocol::ENetDelivery::ReliableOrdered;
+}
+
+[[nodiscard]] bool IsOrderedDelivery(const Zeus::Protocol::ENetDelivery d)
+{
+    return d == Zeus::Protocol::ENetDelivery::ReliableOrdered || d == Zeus::Protocol::ENetDelivery::UnreliableSequenced;
+}
 
 std::string OpcodeName(const std::uint16_t op)
 {
@@ -39,6 +54,10 @@ std::string OpcodeName(const std::uint16_t op)
         return "S_CONNECT_OK";
     case Zeus::Protocol::EOpcode::S_CONNECT_REJECT:
         return "S_CONNECT_REJECT";
+    case Zeus::Protocol::EOpcode::S_CONNECT_CHALLENGE:
+        return "S_CONNECT_CHALLENGE";
+    case Zeus::Protocol::EOpcode::C_CONNECT_RESPONSE:
+        return "C_CONNECT_RESPONSE";
     case Zeus::Protocol::EOpcode::C_PING:
         return "C_PING";
     case Zeus::Protocol::EOpcode::S_PONG:
@@ -47,6 +66,18 @@ std::string OpcodeName(const std::uint16_t op)
         return "C_DISCONNECT";
     case Zeus::Protocol::EOpcode::S_DISCONNECT_OK:
         return "S_DISCONNECT_OK";
+    case Zeus::Protocol::EOpcode::C_LOADING_FRAGMENT:
+        return "C_LOADING_FRAGMENT";
+    case Zeus::Protocol::EOpcode::S_LOADING_ASSEMBLED_OK:
+        return "S_LOADING_ASSEMBLED_OK";
+    case Zeus::Protocol::EOpcode::C_TEST_RELIABLE:
+        return "C_TEST_RELIABLE";
+    case Zeus::Protocol::EOpcode::S_TEST_RELIABLE:
+        return "S_TEST_RELIABLE";
+    case Zeus::Protocol::EOpcode::C_TEST_ORDERED:
+        return "C_TEST_ORDERED";
+    case Zeus::Protocol::EOpcode::S_TEST_ORDERED:
+        return "S_TEST_ORDERED";
     default:
         return "opcode=" + std::to_string(op);
     }
@@ -61,6 +92,9 @@ ZeusResult SendOne(
     const Zeus::Protocol::ENetDelivery delivery,
     const Zeus::Net::ConnectionId headerConnectionId,
     const double nowMono,
+    const std::uint64_t wallMs,
+    const bool bypassQueue,
+    Zeus::Net::PacketStats* stats,
     const std::function<ZeusResult(Zeus::Protocol::PacketWriter&)>& writePayload)
 {
     Zeus::Protocol::PacketBuilder builder;
@@ -83,7 +117,6 @@ ZeusResult SendOne(
         header.sequence = conn->NextSequence();
         header.ack = conn->GetAck();
         header.ackBits = conn->GetAckBits();
-        conn->MarkSent(nowMono);
     }
     else
     {
@@ -92,14 +125,54 @@ ZeusResult SendOne(
         header.ackBits = 0;
     }
     header.connectionId = headerConnectionId;
-    header.flags = 0;
+    if (conn != nullptr && IsOrderedDelivery(delivery))
+    {
+        header.flags = conn->NextReliableOrderId(channel);
+    }
+    else
+    {
+        header.flags = 0;
+    }
 
     const ZeusResult fin = builder.Finalize(header);
     if (!fin.Ok())
     {
         return fin;
     }
-    return udp.SendTo(to, builder.Buffer(), builder.ByteSize());
+
+    const std::uint8_t* buf = builder.Buffer();
+    const std::size_t n = builder.ByteSize();
+
+    if (bypassQueue || conn == nullptr)
+    {
+        const ZeusResult sr = udp.SendTo(to, buf, n);
+        if (conn != nullptr)
+        {
+            conn->MarkSent(nowMono);
+            if (sr.Ok() && IsReliableDelivery(delivery))
+            {
+                std::vector<std::uint8_t> copy(buf, buf + n);
+                conn->RegisterReliableOutboundEcho(std::move(copy), header.sequence, channel, wallMs);
+            }
+        }
+        if (stats != nullptr && sr.Ok())
+        {
+            ++stats->OutboundDatagrams;
+        }
+        return sr;
+    }
+
+    Zeus::Net::FQueuedPacket qp{};
+    qp.Channel = channel;
+    qp.Sequence = header.sequence;
+    qp.Priority = Zeus::Net::ChannelConfigs::PriorityFor(channel);
+    qp.Reliable = IsReliableDelivery(delivery);
+    qp.Ordered = (delivery == Zeus::Protocol::ENetDelivery::ReliableOrdered);
+    qp.OrderId = header.flags;
+    qp.EnqueuedAtWallMs = wallMs;
+    qp.WireBytes.assign(buf, buf + n);
+    conn->QueueOutbound(std::move(qp));
+    return ZeusResult::Success();
 }
 
 void LogPacketIn(const Zeus::Net::UdpEndpoint& from, const std::uint16_t opcode, const std::uint32_t sequence)
@@ -119,7 +192,53 @@ void SessionPacketHandler::OnDatagram(
     const Zeus::Protocol::PacketParser::Output& parsed,
     const Zeus::Net::UdpEndpoint& from)
 {
+    if (packetStats_ != nullptr)
+    {
+        ++packetStats_->DatagramsReceived;
+    }
+
     const std::uint16_t op = parsed.header.opcode;
+    const auto opcodeEnum = static_cast<Zeus::Protocol::EOpcode>(op);
+
+    Zeus::Net::NetConnection* ncRules = nullptr;
+    if (opcodeEnum == Zeus::Protocol::EOpcode::C_CONNECT_REQUEST)
+    {
+        ncRules = connections.FindByEndpoint(from);
+    }
+    else if (parsed.header.connectionId != 0u)
+    {
+        ncRules = connections.FindByConnectionId(parsed.header.connectionId);
+        if (ncRules != nullptr && ncRules->GetEndpoint() != from)
+        {
+            ncRules = nullptr;
+        }
+    }
+
+    ClientSession* sessRules = nullptr;
+    if (ncRules != nullptr)
+    {
+        sessRules = sessions.FindByConnectionId(ncRules->GetConnectionId());
+    }
+
+    const OpcodeRuleResult rr = SessionOpcodeRules::ValidateClientOpcode(
+        opcodeEnum,
+        static_cast<Zeus::Protocol::ENetChannel>(parsed.header.channel),
+        static_cast<Zeus::Protocol::ENetDelivery>(parsed.header.delivery),
+        ncRules != nullptr,
+        sessRules);
+    if (rr != OpcodeRuleResult::Ok)
+    {
+        if (packetStats_ != nullptr)
+        {
+            ++packetStats_->DatagramsRejectedOpcodeRules;
+        }
+        return;
+    }
+
+    if (ncRules != nullptr)
+    {
+        ncRules->ApplyInboundAck(parsed.header.ack, parsed.header.ackBits);
+    }
 
     if (op == static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::C_CONNECT_REQUEST))
     {
@@ -129,7 +248,8 @@ void SessionPacketHandler::OnDatagram(
         if (nc != nullptr)
         {
             existingSession = sessions.FindByConnectionId(nc->GetConnectionId());
-            if (existingSession != nullptr && existingSession->GetState() != SessionState::Connected)
+            if (existingSession != nullptr && existingSession->GetState() != SessionState::Connected &&
+                existingSession->GetState() != SessionState::Connecting)
             {
                 sessions.RemoveByConnectionId(nc->GetConnectionId());
                 existingSession = nullptr;
@@ -152,6 +272,9 @@ void SessionPacketHandler::OnDatagram(
                     Zeus::Protocol::ENetDelivery::ReliableOrdered,
                     nc->GetConnectionId(),
                     nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
                     [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                         Zeus::Protocol::ConnectRejectPayload rj{};
                         rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
@@ -172,6 +295,9 @@ void SessionPacketHandler::OnDatagram(
                     Zeus::Protocol::ENetDelivery::ReliableOrdered,
                     Zeus::Net::kInvalidConnectionId,
                     nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
                     [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                         Zeus::Protocol::ConnectRejectPayload rj{};
                         rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
@@ -208,8 +334,13 @@ void SessionPacketHandler::OnDatagram(
                 Zeus::Protocol::ENetDelivery::ReliableOrdered,
                 ok.connectionId,
                 nowMonotonicSeconds,
+                serverWallTimeMs,
+                false,
+                packetStats_,
                 [&ok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteConnectOkPayload(w, ok); });
-            ZeusLog::Info("Net", std::string("Sent S_CONNECT_OK connectionId=") + std::to_string(ok.connectionId) + " sessionId=" + std::to_string(ok.sessionId) + " (idempotent)");
+            ZeusLog::Info(
+                "Net",
+                std::string("Sent S_CONNECT_OK connectionId=") + std::to_string(ok.connectionId) + " sessionId=" + std::to_string(ok.sessionId) + " (idempotent)");
             return;
         }
 
@@ -227,6 +358,9 @@ void SessionPacketHandler::OnDatagram(
                     Zeus::Protocol::ENetDelivery::ReliableOrdered,
                     Zeus::Net::kInvalidConnectionId,
                     nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
                     [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                         Zeus::Protocol::ConnectRejectPayload rj{};
                         rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::ServerFull);
@@ -248,6 +382,9 @@ void SessionPacketHandler::OnDatagram(
                 Zeus::Protocol::ENetDelivery::ReliableOrdered,
                 nc->GetConnectionId(),
                 nowMonotonicSeconds,
+                serverWallTimeMs,
+                true,
+                packetStats_,
                 [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                     Zeus::Protocol::ConnectRejectPayload rj{};
                     rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidProtocolVersion);
@@ -270,6 +407,9 @@ void SessionPacketHandler::OnDatagram(
                 Zeus::Protocol::ENetDelivery::ReliableOrdered,
                 nc->GetConnectionId(),
                 nowMonotonicSeconds,
+                serverWallTimeMs,
+                true,
+                packetStats_,
                 [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                     Zeus::Protocol::ConnectRejectPayload rj{};
                     rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::ServerFull);
@@ -277,6 +417,36 @@ void SessionPacketHandler::OnDatagram(
                     return Zeus::Protocol::WriteConnectRejectPayload(w, rj);
                 });
             connections.RemoveConnection(nc->GetConnectionId());
+            return;
+        }
+
+        if (existingSession != nullptr && existingSession->GetState() == SessionState::Connecting)
+        {
+            if (nc->IsRemoteDuplicate(parsed.header.sequence))
+            {
+                return;
+            }
+            nc->MarkReceived(parsed.header.sequence);
+            nc->MarkReceive(nowMonotonicSeconds);
+            const std::uint64_t serverNonce = existingSession->GetServerChallengeNonce();
+            existingSession->SetHandshakeNonces(body.clientNonce, serverNonce);
+            Zeus::Protocol::ConnectChallengePayload ch{};
+            ch.serverNonce = serverNonce;
+            ch.connectionId = nc->GetConnectionId();
+            (void)SendOne(
+                udp,
+                from,
+                nc,
+                static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_CHALLENGE),
+                Zeus::Protocol::ENetChannel::Loading,
+                Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                nc->GetConnectionId(),
+                nowMonotonicSeconds,
+                serverWallTimeMs,
+                false,
+                packetStats_,
+                [&ch](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteConnectChallengePayload(w, ch); });
+            ZeusLog::Info("Net", "Sent S_CONNECT_CHALLENGE (handshake repeat/update)");
             return;
         }
 
@@ -292,6 +462,9 @@ void SessionPacketHandler::OnDatagram(
                 Zeus::Protocol::ENetDelivery::ReliableOrdered,
                 nc->GetConnectionId(),
                 nowMonotonicSeconds,
+                serverWallTimeMs,
+                true,
+                packetStats_,
                 [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
                     Zeus::Protocol::ConnectRejectPayload rj{};
                     rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::ServerFull);
@@ -304,15 +477,81 @@ void SessionPacketHandler::OnDatagram(
 
         nc->MarkReceived(parsed.header.sequence);
         nc->MarkReceive(nowMonotonicSeconds);
+        session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+
+        const std::uint64_t serverNonce =
+            (static_cast<std::uint64_t>(nc->GetConnectionId()) * 1315423911ull) ^
+            static_cast<std::uint64_t>(serverWallTimeMs ^ (body.clientNonce * 7ull));
+        session->SetHandshakeNonces(body.clientNonce, serverNonce);
+
+        Zeus::Protocol::ConnectChallengePayload ch{};
+        ch.serverNonce = serverNonce;
+        ch.connectionId = nc->GetConnectionId();
+        (void)SendOne(
+            udp,
+            from,
+            nc,
+            static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_CHALLENGE),
+            Zeus::Protocol::ENetChannel::Loading,
+            Zeus::Protocol::ENetDelivery::ReliableOrdered,
+            nc->GetConnectionId(),
+            nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
+            [&ch](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteConnectChallengePayload(w, ch); });
+
+        std::ostringstream slog;
+        slog << "Created sessionId=" << session->GetSessionId() << " connectionId=" << nc->GetConnectionId() << " endpoint=" << from.ToString()
+              << " (awaiting C_CONNECT_RESPONSE)";
+        ZeusLog::Info("Session", slog.str());
+        ZeusLog::Info("Net", "Sent S_CONNECT_CHALLENGE");
+        return;
+    }
+
+    if (op == static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::C_CONNECT_RESPONSE))
+    {
+        Zeus::Net::NetConnection* nc = connections.FindByConnectionId(parsed.header.connectionId);
+        if (nc == nullptr || nc->GetEndpoint() != from)
+        {
+            return;
+        }
+        ClientSession* session = sessions.FindByConnectionId(nc->GetConnectionId());
+        if (session == nullptr || session->GetState() != SessionState::Connecting)
+        {
+            return;
+        }
+        if (nc->IsRemoteDuplicate(parsed.header.sequence))
+        {
+            return;
+        }
+        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Loading, parsed.header.flags))
+        {
+            return;
+        }
+
+        Zeus::Protocol::ConnectResponsePayload resp{};
+        if (!Zeus::Protocol::ReadConnectResponsePayload(parsed.payload, parsed.payloadSize, resp).Ok())
+        {
+            return;
+        }
+        if (resp.clientNonce != session->GetClientHandshakeNonce() || resp.serverNonce != session->GetServerChallengeNonce())
+        {
+            return;
+        }
+
+        LogPacketIn(from, op, parsed.header.sequence);
+        nc->MarkReceived(parsed.header.sequence);
+        nc->MarkReceive(nowMonotonicSeconds);
         session->SetState(SessionState::Connected);
         session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+        nc->ResetInboundReliableOrder(Zeus::Protocol::ENetChannel::Loading);
 
         Zeus::Protocol::ConnectOkPayload ok{};
         ok.connectionId = nc->GetConnectionId();
         ok.sessionId = session->GetSessionId();
         ok.serverTimeMs = serverWallTimeMs;
         ok.heartbeatIntervalMs = kHeartbeatIntervalMs;
-
         (void)SendOne(
             udp,
             from,
@@ -322,15 +561,13 @@ void SessionPacketHandler::OnDatagram(
             Zeus::Protocol::ENetDelivery::ReliableOrdered,
             ok.connectionId,
             nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
             [&ok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteConnectOkPayload(w, ok); });
-
-        std::ostringstream slog;
-        slog << "Created sessionId=" << session->GetSessionId() << " connectionId=" << nc->GetConnectionId() << " endpoint=" << from.ToString();
-        ZeusLog::Info("Session", slog.str());
-        ZeusLog::Info("Session", std::string("Connected sessionId=") + std::to_string(session->GetSessionId()) + " connectionId=" + std::to_string(nc->GetConnectionId()));
         ZeusLog::Info(
-            "Net",
-            std::string("Sent S_CONNECT_OK connectionId=") + std::to_string(ok.connectionId) + " sessionId=" + std::to_string(ok.sessionId));
+            "Session",
+            std::string("Connected sessionId=") + std::to_string(session->GetSessionId()) + " connectionId=" + std::to_string(nc->GetConnectionId()));
         return;
     }
 
@@ -361,6 +598,10 @@ void SessionPacketHandler::OnDatagram(
         nc->MarkReceived(parsed.header.sequence);
         nc->MarkReceive(nowMonotonicSeconds);
         session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+        if (networkDiagnostics_ != nullptr)
+        {
+            networkDiagnostics_->OnPongSample(pingBody.clientTimeMs, serverWallTimeMs, serverWallTimeMs);
+        }
 
         Zeus::Protocol::PongPayload pong{};
         pong.clientTimeMs = pingBody.clientTimeMs;
@@ -374,6 +615,9 @@ void SessionPacketHandler::OnDatagram(
             Zeus::Protocol::ENetDelivery::Unreliable,
             nc->GetConnectionId(),
             nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
             [&pong](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WritePongPayload(w, pong); });
         ZeusLog::Info(
             "Net",
@@ -419,6 +663,9 @@ void SessionPacketHandler::OnDatagram(
             Zeus::Protocol::ENetDelivery::Reliable,
             nc->GetConnectionId(),
             nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
             [&dok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteDisconnectOkPayload(w, dok); });
 
         const Zeus::Net::SessionId removedSessionId = session->GetSessionId();
@@ -433,6 +680,158 @@ void SessionPacketHandler::OnDatagram(
             std::string("Removed sessionId=") + std::to_string(removedSessionId) + " connectionId=" + std::to_string(removedConnId));
         return;
     }
+
+    if (op == static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::C_TEST_RELIABLE))
+    {
+        Zeus::Net::NetConnection* nc = connections.FindByConnectionId(parsed.header.connectionId);
+        if (nc == nullptr || nc->GetEndpoint() != from)
+        {
+            return;
+        }
+        ClientSession* session = sessions.FindByConnectionId(nc->GetConnectionId());
+        if (session == nullptr || session->GetState() != SessionState::Connected)
+        {
+            return;
+        }
+        if (nc->IsRemoteDuplicate(parsed.header.sequence))
+        {
+            return;
+        }
+        LogPacketIn(from, op, parsed.header.sequence);
+        nc->MarkReceived(parsed.header.sequence);
+        nc->MarkReceive(nowMonotonicSeconds);
+        session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+        (void)SendOne(
+            udp,
+            from,
+            nc,
+            static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TEST_RELIABLE),
+            Zeus::Protocol::ENetChannel::Gameplay,
+            Zeus::Protocol::ENetDelivery::Reliable,
+            nc->GetConnectionId(),
+            nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
+            [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
+                (void)w;
+                return ZeusResult::Success();
+            });
+        return;
+    }
+
+    if (op == static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::C_TEST_ORDERED))
+    {
+        Zeus::Net::NetConnection* nc = connections.FindByConnectionId(parsed.header.connectionId);
+        if (nc == nullptr || nc->GetEndpoint() != from)
+        {
+            return;
+        }
+        ClientSession* session = sessions.FindByConnectionId(nc->GetConnectionId());
+        if (session == nullptr || session->GetState() != SessionState::Connected)
+        {
+            return;
+        }
+        if (nc->IsRemoteDuplicate(parsed.header.sequence))
+        {
+            return;
+        }
+        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Gameplay, parsed.header.flags))
+        {
+            return;
+        }
+        LogPacketIn(from, op, parsed.header.sequence);
+        nc->MarkReceived(parsed.header.sequence);
+        nc->MarkReceive(nowMonotonicSeconds);
+        session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+        (void)SendOne(
+            udp,
+            from,
+            nc,
+            static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TEST_ORDERED),
+            Zeus::Protocol::ENetChannel::Gameplay,
+            Zeus::Protocol::ENetDelivery::ReliableOrdered,
+            nc->GetConnectionId(),
+            nowMonotonicSeconds,
+            serverWallTimeMs,
+            false,
+            packetStats_,
+            [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
+                (void)w;
+                return ZeusResult::Success();
+            });
+        return;
+    }
+
+    if (op == static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::C_LOADING_FRAGMENT))
+    {
+        Zeus::Net::NetConnection* nc = connections.FindByConnectionId(parsed.header.connectionId);
+        if (nc == nullptr || nc->GetEndpoint() != from)
+        {
+            return;
+        }
+        ClientSession* session = sessions.FindByConnectionId(nc->GetConnectionId());
+        if (session == nullptr || session->GetState() != SessionState::Connected)
+        {
+            return;
+        }
+        if (nc->IsRemoteDuplicate(parsed.header.sequence))
+        {
+            return;
+        }
+        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Loading, parsed.header.flags))
+        {
+            return;
+        }
+        Zeus::Protocol::LoadingFragmentPayload frag{};
+        if (!Zeus::Protocol::ReadLoadingFragmentPayload(parsed.payload, parsed.payloadSize, frag).Ok())
+        {
+            return;
+        }
+        LogPacketIn(from, op, parsed.header.sequence);
+        nc->MarkReceived(parsed.header.sequence);
+        nc->MarkReceive(nowMonotonicSeconds);
+        session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+        const ClientSession::LoadingFragmentResult fr = session->FeedLoadingFragment(
+            frag.snapshotId,
+            frag.chunkIndex,
+            frag.chunkCount,
+            frag.data.data(),
+            frag.data.size(),
+            nowMonotonicSeconds,
+            packetStats_);
+        if (fr == ClientSession::LoadingFragmentResult::Completed)
+        {
+            Zeus::Protocol::LoadingAssembledOkPayload ok{};
+            ok.snapshotId = frag.snapshotId;
+            (void)SendOne(
+                udp,
+                from,
+                nc,
+                static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_LOADING_ASSEMBLED_OK),
+                Zeus::Protocol::ENetChannel::Loading,
+                Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                nc->GetConnectionId(),
+                nowMonotonicSeconds,
+                serverWallTimeMs,
+                false,
+                packetStats_,
+                [&ok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteLoadingAssembledOkPayload(w, ok); });
+        }
+        return;
+    }
+}
+
+void SessionPacketHandler::OnTickPostNetwork(
+    Zeus::Net::UdpServer& udp,
+    Zeus::Net::NetConnectionManager& connections,
+    const double nowMonotonicSeconds,
+    const std::uint64_t serverWallTimeMs)
+{
+    (void)nowMonotonicSeconds;
+    connections.TickAllReliabilityResends(udp, serverWallTimeMs, packetStats_);
+    constexpr std::uint32_t kBudget = Zeus::Protocol::ZEUS_MAX_PACKET_BYTES * 64u;
+    connections.FlushAllOutbound(udp, kBudget, serverWallTimeMs, nowMonotonicSeconds, packetStats_);
 }
 
 void SessionPacketHandler::OnTickTimeouts(

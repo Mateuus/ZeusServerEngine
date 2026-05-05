@@ -47,8 +47,13 @@ target_include_directories(ZeusPlatform PUBLIC
 target_link_libraries(ZeusPlatform PUBLIC ZeusCore)
 
 add_library(ZeusNet STATIC
+    Source/ZeusNet/Private/ChannelConfig.cpp
     Source/ZeusNet/Private/NetConnection.cpp
     Source/ZeusNet/Private/NetConnectionManager.cpp
+    Source/ZeusNet/Private/NetworkDiagnostics.cpp
+    Source/ZeusNet/Private/NetworkSimulator.cpp
+    Source/ZeusNet/Private/PacketAckTracker.cpp
+    Source/ZeusNet/Private/SendQueue.cpp
     Source/ZeusNet/Private/UdpEndpoint.cpp
     Source/ZeusNet/Private/UdpServer.cpp
     Source/ZeusNet/Private/UdpSocket.cpp
@@ -67,6 +72,7 @@ endif()
 add_library(ZeusSession STATIC
     Source/ZeusSession/Private/ClientSession.cpp
     Source/ZeusSession/Private/SessionManager.cpp
+    Source/ZeusSession/Private/SessionOpcodeRules.cpp
     Source/ZeusSession/Private/SessionPacketHandler.cpp
 )
 target_include_directories(ZeusSession PUBLIC

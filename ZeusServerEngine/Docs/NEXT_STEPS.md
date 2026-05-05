@@ -1,14 +1,11 @@
 # Próximos passos — Zeus Server Engine (rede e além)
 
-Itens **intencionalmente** fora do âmbito da etapa atual (handshake + ping/pong + disconnect):
+## Rede / transporte (melhorias incrementais)
 
-## Rede / transporte
-
-- Fila de envio e **resend** para `Reliable` / `ReliableOrdered` de verdade
-- Ordenação estrita e dedupe completo em todos os canais
-- Timeout configurável por JSON, política de `S_DISCONNECT_OK` automático ao expirar
-- Métricas (`NetStats`), perda, RTT agregado no servidor
-- `NetSendQueue` / `NetReceiveQueue` conforme plano longo
+- Política de `S_DISCONNECT_OK` automático ao expirar timeout (sem depender só de remoção silenciosa).
+- Timeout e intervalos configuráveis por JSON (além dos valores fixos atuais).
+- Testes automatizados (CI) para wire + ClientTest e cenários de perda (NetSim).
+- `NetReceiveQueue` explícita se o motor precisar de priorização na receção.
 
 ## Gameplay / motor (não iniciar antes da rede estar estável)
 
@@ -20,4 +17,3 @@ Itens **intencionalmente** fora do âmbito da etapa atual (handshake + ping/pong
 ## Documentação
 
 - Expandir exemplos de payloads quando novos opcodes forem adicionados
-- Testes automatizados (CI) para wire + ClientTest

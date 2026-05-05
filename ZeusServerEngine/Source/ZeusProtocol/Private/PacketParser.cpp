@@ -12,10 +12,14 @@ bool PacketParser::IsKnownOpcode(const std::uint16_t opcode)
     case static_cast<std::uint16_t>(EOpcode::C_CONNECT_REQUEST):
     case static_cast<std::uint16_t>(EOpcode::S_CONNECT_OK):
     case static_cast<std::uint16_t>(EOpcode::S_CONNECT_REJECT):
+    case static_cast<std::uint16_t>(EOpcode::S_CONNECT_CHALLENGE):
+    case static_cast<std::uint16_t>(EOpcode::C_CONNECT_RESPONSE):
     case static_cast<std::uint16_t>(EOpcode::C_PING):
     case static_cast<std::uint16_t>(EOpcode::S_PONG):
     case static_cast<std::uint16_t>(EOpcode::C_DISCONNECT):
     case static_cast<std::uint16_t>(EOpcode::S_DISCONNECT_OK):
+    case static_cast<std::uint16_t>(EOpcode::C_LOADING_FRAGMENT):
+    case static_cast<std::uint16_t>(EOpcode::S_LOADING_ASSEMBLED_OK):
     case static_cast<std::uint16_t>(EOpcode::C_TEST_RELIABLE):
     case static_cast<std::uint16_t>(EOpcode::S_TEST_RELIABLE):
     case static_cast<std::uint16_t>(EOpcode::C_TEST_ORDERED):

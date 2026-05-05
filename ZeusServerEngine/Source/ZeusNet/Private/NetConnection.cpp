@@ -1,6 +1,10 @@
 #include "NetConnection.hpp"
 
+#include "ChannelConfig.hpp"
+#include "PacketAckTracker.hpp"
 #include "PlatformTime.hpp"
+
+#include <vector>
 
 namespace Zeus::Net
 {
@@ -11,6 +15,8 @@ NetConnection::NetConnection(const ConnectionId connectionId, const UdpEndpoint&
     , lastReceiveSeconds_(createdAtSeconds_)
     , lastSendSeconds_(createdAtSeconds_)
 {
+    nextOutboundReliableOrder_.fill(0);
+    nextInboundReliableOrderExpected_.fill(0);
 }
 
 std::uint32_t NetConnection::NextSequence()
@@ -41,10 +47,6 @@ void NetConnection::MarkReceived(const std::uint32_t remoteSequence)
         {
             ackBits_ |= (1u << (behind - 1));
         }
-    }
-    else
-    {
-        // remoteSequence == lastRemoteSeq_: segundo pacote com mesma seq — não altera bitmask.
     }
 }
 
@@ -80,5 +82,117 @@ void NetConnection::MarkReceive(const double nowSeconds)
 bool NetConnection::IsTimedOut(const double nowSeconds, const double timeoutSeconds) const
 {
     return (nowSeconds - lastReceiveSeconds_) > timeoutSeconds;
+}
+
+void NetConnection::ApplyInboundAck(const std::uint32_t ack, const std::uint32_t ackBits)
+{
+    reliability_.OnRemoteAck(ack, ackBits);
+}
+
+void NetConnection::QueueOutbound(FQueuedPacket&& packet)
+{
+    sendQueue_.Enqueue(std::move(packet));
+}
+
+std::uint32_t NetConnection::FlushOutboundQueues(
+    UdpServer& udp,
+    const std::uint32_t globalBudgetBytes,
+    const std::uint64_t wallTimeMs,
+    const double nowMonotonicSeconds,
+    PacketStats* stats)
+{
+    std::uint32_t remaining = globalBudgetBytes;
+    std::array<std::uint32_t, 5> chBudget{};
+    for (int i = 0; i < 5; ++i)
+    {
+        chBudget[static_cast<std::size_t>(i)] =
+            ChannelConfigs::MaxBytesPerTickFor(static_cast<Zeus::Protocol::ENetChannel>(i));
+    }
+    std::uint32_t sentTotal = 0;
+    FQueuedPacket pkt{};
+    while (remaining > 0 && sendQueue_.TryPopNext(pkt, remaining, chBudget))
+    {
+        const ZeusResult r = udp.SendTo(endpoint_, pkt.WireBytes.data(), pkt.WireBytes.size());
+        if (!r.Ok())
+        {
+            break;
+        }
+        MarkSent(nowMonotonicSeconds);
+        sentTotal += static_cast<std::uint32_t>(pkt.WireBytes.size());
+        if (stats != nullptr)
+        {
+            ++stats->OutboundDatagrams;
+        }
+        if (pkt.Reliable)
+        {
+            FSentPacketInfo info{};
+            info.Sequence = pkt.Sequence;
+            info.SentAtWallMs = wallTimeMs;
+            info.Channel = static_cast<std::uint8_t>(pkt.Channel);
+            info.Reliable = true;
+            info.ResendCount = 0;
+            info.WireCopy = std::move(pkt.WireBytes);
+            reliability_.RegisterReliableSent(std::move(info));
+        }
+    }
+    return sentTotal;
+}
+
+void NetConnection::TickReliabilityResends(UdpServer& udp, const std::uint64_t wallTimeMs, PacketStats* stats)
+{
+    reliability_.TickResends(udp, endpoint_, wallTimeMs, stats);
+}
+
+void NetConnection::RegisterReliableOutboundEcho(
+    std::vector<std::uint8_t>&& wireCopy,
+    const std::uint32_t sequence,
+    const Zeus::Protocol::ENetChannel channel,
+    const std::uint64_t wallTimeMs)
+{
+    FSentPacketInfo info{};
+    info.Sequence = sequence;
+    info.SentAtWallMs = wallTimeMs;
+    info.Channel = static_cast<std::uint8_t>(channel);
+    info.Reliable = true;
+    info.ResendCount = 0;
+    info.WireCopy = std::move(wireCopy);
+    reliability_.RegisterReliableSent(std::move(info));
+}
+
+std::uint16_t NetConnection::NextReliableOrderId(const Zeus::Protocol::ENetChannel channel)
+{
+    const std::size_t idx = ChannelIndex(channel);
+    const std::uint16_t v = nextOutboundReliableOrder_[idx];
+    ++nextOutboundReliableOrder_[idx];
+    return v;
+}
+
+bool NetConnection::TryAcceptInboundReliableOrdered(
+    const Zeus::Protocol::ENetChannel channel,
+    const std::uint16_t orderId)
+{
+    const std::size_t idx = ChannelIndex(channel);
+    if (orderId != nextInboundReliableOrderExpected_[idx])
+    {
+        return false;
+    }
+    ++nextInboundReliableOrderExpected_[idx];
+    return true;
+}
+
+void NetConnection::ResetInboundReliableOrder(const Zeus::Protocol::ENetChannel channel)
+{
+    const std::size_t idx = ChannelIndex(channel);
+    nextInboundReliableOrderExpected_[idx] = 0;
+}
+
+std::size_t NetConnection::ChannelIndex(const Zeus::Protocol::ENetChannel channel)
+{
+    const int v = static_cast<int>(channel);
+    if (v < 0 || v >= 5)
+    {
+        return 0;
+    }
+    return static_cast<std::size_t>(v);
 }
 } // namespace Zeus::Net

@@ -1,5 +1,9 @@
 #include "SessionWire.hpp"
 
+#include "PacketConstants.hpp"
+
+#include <algorithm>
+
 namespace Zeus::Protocol
 {
 namespace
@@ -162,5 +166,134 @@ ZeusResult ReadDisconnectOkPayload(const std::uint8_t* payload, const std::size_
 ZeusResult WriteDisconnectOkPayload(PacketWriter& w, const DisconnectOkPayload& in)
 {
     return w.WriteUInt64(in.serverTimeMs);
+}
+
+ZeusResult ReadConnectChallengePayload(const std::uint8_t* payload, const std::size_t payloadSize, ConnectChallengePayload& out)
+{
+    return ReadPayloadReader(payload, payloadSize, [&out](PacketReader& r) -> ZeusResult {
+        ZeusResult a = r.ReadUInt64(out.serverNonce);
+        if (!a.Ok())
+        {
+            return a;
+        }
+        return r.ReadUInt32(out.connectionId);
+    });
+}
+
+ZeusResult WriteConnectChallengePayload(PacketWriter& w, const ConnectChallengePayload& in)
+{
+    ZeusResult a = w.WriteUInt64(in.serverNonce);
+    if (!a.Ok())
+    {
+        return a;
+    }
+    return w.WriteUInt32(in.connectionId);
+}
+
+ZeusResult ReadConnectResponsePayload(const std::uint8_t* payload, const std::size_t payloadSize, ConnectResponsePayload& out)
+{
+    return ReadPayloadReader(payload, payloadSize, [&out](PacketReader& r) -> ZeusResult {
+        ZeusResult a = r.ReadUInt64(out.clientNonce);
+        if (!a.Ok())
+        {
+            return a;
+        }
+        return r.ReadUInt64(out.serverNonce);
+    });
+}
+
+ZeusResult WriteConnectResponsePayload(PacketWriter& w, const ConnectResponsePayload& in)
+{
+    ZeusResult a = w.WriteUInt64(in.clientNonce);
+    if (!a.Ok())
+    {
+        return a;
+    }
+    return w.WriteUInt64(in.serverNonce);
+}
+
+ZeusResult ReadLoadingFragmentPayload(const std::uint8_t* payload, const std::size_t payloadSize, LoadingFragmentPayload& out)
+{
+    return ReadPayloadReader(payload, payloadSize, [&out](PacketReader& r) -> ZeusResult {
+        ZeusResult a = r.ReadUInt64(out.snapshotId);
+        if (!a.Ok())
+        {
+            return a;
+        }
+        ZeusResult b = r.ReadUInt16(out.chunkIndex);
+        if (!b.Ok())
+        {
+            return b;
+        }
+        ZeusResult c = r.ReadUInt16(out.chunkCount);
+        if (!c.Ok())
+        {
+            return c;
+        }
+        std::uint16_t dataLen = 0;
+        ZeusResult d = r.ReadUInt16(dataLen);
+        if (!d.Ok())
+        {
+            return d;
+        }
+        if (dataLen > ZEUS_MAX_PAYLOAD_BYTES)
+        {
+            return ZeusResult::Failure(ZeusErrorCode::ParseError, "LoadingFragment: dataLen too large.");
+        }
+        if (r.Remaining() < static_cast<std::size_t>(dataLen))
+        {
+            return ZeusResult::Failure(ZeusErrorCode::ParseError, "LoadingFragment: truncated data.");
+        }
+        out.data.resize(dataLen);
+        if (dataLen > 0)
+        {
+            return r.ReadBytes(out.data.data(), static_cast<std::size_t>(dataLen));
+        }
+        return ZeusResult::Success();
+    });
+}
+
+ZeusResult WriteLoadingFragmentPayload(PacketWriter& w, const LoadingFragmentPayload& in)
+{
+    if (in.data.size() > ZEUS_MAX_PAYLOAD_BYTES)
+    {
+        return ZeusResult::Failure(ZeusErrorCode::InvalidArgument, "LoadingFragment: data too large.");
+    }
+    ZeusResult a = w.WriteUInt64(in.snapshotId);
+    if (!a.Ok())
+    {
+        return a;
+    }
+    ZeusResult b = w.WriteUInt16(in.chunkIndex);
+    if (!b.Ok())
+    {
+        return b;
+    }
+    ZeusResult c = w.WriteUInt16(in.chunkCount);
+    if (!c.Ok())
+    {
+        return c;
+    }
+    const auto len = static_cast<std::uint16_t>(std::min<std::size_t>(in.data.size(), 65535u));
+    ZeusResult d = w.WriteUInt16(len);
+    if (!d.Ok())
+    {
+        return d;
+    }
+    if (len > 0)
+    {
+        return w.WriteBytes(in.data.data(), static_cast<std::size_t>(len));
+    }
+    return ZeusResult::Success();
+}
+
+ZeusResult ReadLoadingAssembledOkPayload(const std::uint8_t* payload, const std::size_t payloadSize, LoadingAssembledOkPayload& out)
+{
+    return ReadPayloadReader(payload, payloadSize, [&out](PacketReader& r) -> ZeusResult { return r.ReadUInt64(out.snapshotId); });
+}
+
+ZeusResult WriteLoadingAssembledOkPayload(PacketWriter& w, const LoadingAssembledOkPayload& in)
+{
+    return w.WriteUInt64(in.snapshotId);
 }
 } // namespace Zeus::Protocol

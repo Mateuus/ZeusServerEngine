@@ -34,22 +34,38 @@ Este documento descreve a camada **ZeusProtocol** + **ZeusNet** + **ZeusSession*
 
 O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de payload.
 
-### Canais / entrega sugeridos (controlos)
+### `ZEUS_PROTOCOL_VERSION`
+
+- **2** (atual): handshake com challenge, filas de envio, ACK/reenvio de reliable, fragmentação de loading, simulador de perda opcional.
+
+### Canais / entrega (controlos)
 
 | Fluxo | Canal (`ENetChannel`) | Entrega (`ENetDelivery`) |
 |--------|------------------------|---------------------------|
-| `C_CONNECT_REQUEST` / `S_CONNECT_OK` / `S_CONNECT_REJECT` | `Loading` | `ReliableOrdered` |
-| `C_PING` / `S_PONG` | `Gameplay` | `Unreliable` |
-| `C_DISCONNECT` / `S_DISCONNECT_OK` | `Gameplay` | `Reliable` |
+| `C_CONNECT_REQUEST` | `Loading` | `Reliable` ou `ReliableOrdered` |
+| `S_CONNECT_CHALLENGE` / `S_CONNECT_OK` / `S_CONNECT_REJECT` | `Loading` | `ReliableOrdered` |
+| `C_CONNECT_RESPONSE` | `Loading` | `ReliableOrdered` |
+| `C_PING` / `S_PONG` | `Gameplay` | `Unreliable` (ou `UnreliableSequenced`) |
+| `C_DISCONNECT` / `S_DISCONNECT_OK` | `Gameplay` | `Reliable` ou `ReliableOrdered` |
+| `C_LOADING_FRAGMENT` / `S_LOADING_ASSEMBLED_OK` | `Loading` | `ReliableOrdered` |
 
-*Nota:* `Reliable` / `ReliableOrdered` nos headers são **semântica preparada**; ainda **não** há fila de reenvio nem ordenação garantida na camada de transporte.
+### `flags` no cabeçalho
 
-## Handshake
+- Em mensagens **`ReliableOrdered`** (e `UnreliableSequenced` no servidor), o campo `flags` transporta um **order id por canal** (`NetConnection::NextReliableOrderId` / `TryAcceptInboundReliableOrdered`).
 
-1. Cliente envia `C_CONNECT_REQUEST` com `connectionId = 0` no cabeçalho (primeiro pedido).
-2. Servidor cria `NetConnection` (id incremental), `ClientSession` (`sessionId` incremental), responde `S_CONNECT_OK` com ids e tempos.
-3. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (útil com perda UDP).
-4. Sessões em estado não final **Connecting** no mesmo endpoint são removidas antes de um novo handshake.
+### Fila, ACK e reenvio
+
+- Saídas passam por **`SendQueue`** por canal, drenadas no fim do tick com orçamento em bytes (`ChannelConfigs`).
+- Pacotes **reliable** enviados ficam registados em **`ReliabilityLayer` / `PacketAckTracker`** até o cliente ACKar via `ack` / `ackBits` do cabeçalho; **reenvio** periódico com limite de tentativas.
+
+## Handshake (protocolo 2)
+
+1. Cliente envia `C_CONNECT_REQUEST` com `connectionId = 0` no cabeçalho.
+2. Servidor cria `NetConnection` e `ClientSession` em estado **`Connecting`**, envia `S_CONNECT_CHALLENGE` (`serverNonce`, `connectionId` no payload).
+3. Cliente responde `C_CONNECT_RESPONSE` (`clientNonce` do pedido + `serverNonce` do challenge), `ReliableOrdered` no canal `Loading`, `connectionId` no cabeçalho igual ao recebido no challenge.
+4. Servidor valida nonces e ordenação, passa a sessão a **`Connected`**, envia `S_CONNECT_OK`.
+5. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (útil com perda UDP).
+6. Sessões em estado **`Connecting`** no mesmo endpoint: novo `C_CONNECT_REQUEST` válido **reenvia o mesmo challenge** (mesmo `serverNonce`), atualizando o `clientNonce` do pedido.
 
 ### Payload `C_CONNECT_REQUEST`
 
@@ -61,6 +77,20 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 
 Validação: `clientProtocolVersion` deve ser `ZEUS_PROTOCOL_VERSION`; caso contrário `S_CONNECT_REJECT` com `reasonCode = 1` (InvalidProtocolVersion).
 
+### Payload `S_CONNECT_CHALLENGE`
+
+| Campo | Tipo |
+|--------|------|
+| `serverNonce` | `uint64` |
+| `connectionId` | `uint32` |
+
+### Payload `C_CONNECT_RESPONSE`
+
+| Campo | Tipo |
+|--------|------|
+| `clientNonce` | `uint64` |
+| `serverNonce` | `uint64` |
+
 ### Payload `S_CONNECT_OK`
 
 | Campo | Tipo |
@@ -69,6 +99,18 @@ Validação: `clientProtocolVersion` deve ser `ZEUS_PROTOCOL_VERSION`; caso cont
 | `sessionId` | `uint64` |
 | `serverTimeMs` | `uint64` |
 | `heartbeatIntervalMs` | `uint32` (fixo 5000 nesta fase) |
+
+### Payload `C_LOADING_FRAGMENT` (teste / loading)
+
+| Campo | Tipo |
+|--------|------|
+| `snapshotId` | `uint64` |
+| `chunkIndex` | `uint16` |
+| `chunkCount` | `uint16` |
+| `dataLen` | `uint16` |
+| `data` | `dataLen` bytes |
+
+Quando todos os índices `0 .. chunkCount-1` foram recebidos, o servidor envia `S_LOADING_ASSEMBLED_OK` com `snapshotId` (`uint64`).
 
 ### Payload `S_CONNECT_REJECT`
 
@@ -103,10 +145,11 @@ Motivos iniciais (`ConnectRejectReason`):
 - **`ConnectionId`**: incremental no servidor (`1, 2, …`), transportado no cabeçalho após handshake.
 - **`SessionId`**: incremental `uint64` no `SessionManager`, devolvido em `S_CONNECT_OK`.
 
-## Sequence / Ack / AckBits (básico)
+## Sequence / Ack / AckBits
 
 - `NetConnection::NextSequence()` gera o `sequence` de **saída** do servidor para essa conexão.
-- `MarkReceived` / `GetAck` / `GetAckBits` implementam histórico básico de 32 bits relativamente ao último `sequence` remoto visto (sem reenvio).
+- `MarkReceived` / `GetAck` / `GetAckBits` implementam histórico básico de 32 bits relativamente ao último `sequence` remoto visto.
+- Cada datagrama recebido do cliente chama `ApplyInboundAck(ack, ackBits)` para libertar envios reliable já confirmados pelo cliente.
 
 ## Timeout
 
@@ -117,6 +160,12 @@ Motivos iniciais (`ConnectRejectReason`):
 `Config/server.json`:
 
 - **`ListenUdpPort`**: `0` = sem UDP; `1`–`65535` = bind em `0.0.0.0:porta` e processamento no tick fixo.
+- **`NetSimDropPermille`**: `0`–`1000` — probabilidade aproximada de **descartar** datagramas UDP recebidos (desenvolvimento); `0` = desligado.
+
+## Métricas e diagnóstico
+
+- `PacketStats` (contadores: recebidos, rejeitados por regras/parse, drops do simulador, reenvios reliable, envios, assemblies de loading concluídos).
+- `NetworkDiagnostics::LastRttMs` atualizado a partir de `C_PING` (estimativa grosseira).
 
 Log esperado à subida:
 
@@ -145,4 +194,4 @@ node dist/index.js --host 127.0.0.1 --port 27777 --auto
 
 ## Ainda **não** implementado
 
-Ver [NEXT_STEPS.md](NEXT_STEPS.md): reenvio reliable completo, `ReliableOrdered` real, timeout avançado, gameplay, movimento, replicação, AOI, Jolt, etc.
+Ver [NEXT_STEPS.md](NEXT_STEPS.md): gameplay, movimento, replicação, AOI, Jolt, etc.

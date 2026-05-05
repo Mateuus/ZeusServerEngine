@@ -3,5 +3,6 @@
   "LogLevel": "Info",
   "SessionLogDir": "Logs",
   "DebugOverlayRows": 0,
-  "ListenUdpPort": 27777
+  "ListenUdpPort": 27777,
+  "NetSimDropPermille": 0
 }

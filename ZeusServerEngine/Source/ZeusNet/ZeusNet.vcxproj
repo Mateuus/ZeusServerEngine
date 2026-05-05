@@ -83,16 +83,28 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Private\ChannelConfig.cpp" />
     <ClCompile Include="Private\NetConnection.cpp" />
     <ClCompile Include="Private\NetConnectionManager.cpp" />
+    <ClCompile Include="Private\NetworkDiagnostics.cpp" />
+    <ClCompile Include="Private\NetworkSimulator.cpp" />
+    <ClCompile Include="Private\PacketAckTracker.cpp" />
+    <ClCompile Include="Private\SendQueue.cpp" />
     <ClCompile Include="Private\UdpEndpoint.cpp" />
     <ClCompile Include="Private\UdpServer.cpp" />
     <ClCompile Include="Private\UdpSocket.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Public\ChannelConfig.hpp" />
     <ClInclude Include="Public\NetConnection.hpp" />
     <ClInclude Include="Public\NetConnectionManager.hpp" />
+    <ClInclude Include="Public\NetworkDiagnostics.hpp" />
+    <ClInclude Include="Public\NetworkSimulator.hpp" />
+    <ClInclude Include="Public\PacketAckTracker.hpp" />
+    <ClInclude Include="Public\PacketStats.hpp" />
     <ClInclude Include="Public\NetTypes.hpp" />
+    <ClInclude Include="Public\ReliabilityLayer.hpp" />
+    <ClInclude Include="Public\SendQueue.hpp" />
     <ClInclude Include="Public\UdpEndpoint.hpp" />
     <ClInclude Include="Public\UdpServer.hpp" />
     <ClInclude Include="Public\UdpSocket.hpp" />

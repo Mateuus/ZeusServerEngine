@@ -11,6 +11,9 @@
 
 namespace Zeus::Net
 {
+class UdpServer;
+struct PacketStats;
+
 /** Gere conexões UDP lógicas por endpoint e por `ConnectionId`. */
 class NetConnectionManager
 {
@@ -31,6 +34,15 @@ public:
     void UpdateTimeouts(double nowSeconds, double timeoutSeconds, std::vector<ConnectionId>& removedOut);
 
     [[nodiscard]] std::size_t GetConnectionCount() const { return byId_.size(); }
+
+    void FlushAllOutbound(
+        UdpServer& udp,
+        std::uint32_t budgetBytes,
+        std::uint64_t wallTimeMs,
+        double nowMonotonicSeconds,
+        PacketStats* stats);
+
+    void TickAllReliabilityResends(UdpServer& udp, std::uint64_t wallTimeMs, PacketStats* stats);
 
 private:
     [[nodiscard]] static std::uint64_t EndpointKey(const UdpEndpoint& e);
