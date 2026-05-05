@@ -1,0 +1,19 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Zeus Network",
+  "Description": "Runtime UDP client for Zeus Server Engine.",
+  "Category": "Zeus",
+  "CreatedBy": "Zeus Server Engine",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "ZeusNetwork",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
