@@ -10,3 +10,7 @@ bin/
 build/
 out/
 cmake-build-*/
+
+# ClientTest (Node)
+ClientTest/node_modules/
+ClientTest/dist/

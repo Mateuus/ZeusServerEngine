@@ -12,7 +12,7 @@ class EngineLoop;
 
 namespace Zeus::App
 {
-/** Bootstrap for Part 1: config, logging, engine loop (no network). */
+/** Bootstrap: Parte 1 (runtime) + Parte 2 (UDP opcional via `ListenUdpPort`). */
 class CoreServerApp
 {
 public:

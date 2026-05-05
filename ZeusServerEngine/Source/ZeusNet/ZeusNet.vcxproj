@@ -13,19 +13,19 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{D9842E3F-768F-4E90-C134-5AF16E00C678}</ProjectGuid>
-    <RootNamespace>ZeusApp</RootNamespace>
+    <ProjectGuid>{F5A6B7C8-D9E0-41F2-A3B4-C5D6E7F8A9B0}</ProjectGuid>
+    <RootNamespace>ZeusNet</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
@@ -44,31 +44,20 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir>
-    <TargetName>ZeusServer</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir>
     <IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir>
-    <TargetName>ZeusServer</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusPlatform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
-    </Link>
-    <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Config" mkdir "$(OutDir)Config"
-if not exist "$(OutDir)Logs" mkdir "$(OutDir)Logs"
-xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -76,21 +65,11 @@ xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusPlatform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
-    </Link>
-    <PostBuildEvent>
-      <Command>if not exist "$(OutDir)Config" mkdir "$(OutDir)Config"
-if not exist "$(OutDir)Logs" mkdir "$(OutDir)Logs"
-xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ProjectReference Include="..\ZeusCore\ZeusCore.vcxproj">
@@ -102,22 +81,21 @@ xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
     <ProjectReference Include="..\ZeusPlatform\ZeusPlatform.vcxproj">
       <Project>{b7620b1c-546d-4c7e-af12-3edf4c88a456}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\ZeusNet\ZeusNet.vcxproj">
-      <Project>{f5a6b7c8-d9e0-41f2-a3b4-c5d6e7f8a9b0}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\ZeusSession\ZeusSession.vcxproj">
-      <Project>{a6b7c8d9-e0f1-42a3-b4c5-d6e7f8a9b0c1}</Project>
-    </ProjectReference>
-    <ProjectReference Include="..\ZeusRuntime\ZeusRuntime.vcxproj">
-      <Project>{c8731d2e-657e-4d8f-b023-4fe05d99b567}</Project>
-    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Private\CoreServerApp.cpp" />
-    <ClCompile Include="Private\main.cpp" />
+    <ClCompile Include="Private\NetConnection.cpp" />
+    <ClCompile Include="Private\NetConnectionManager.cpp" />
+    <ClCompile Include="Private\UdpEndpoint.cpp" />
+    <ClCompile Include="Private\UdpServer.cpp" />
+    <ClCompile Include="Private\UdpSocket.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Public\CoreServerApp.hpp" />
+    <ClInclude Include="Public\NetConnection.hpp" />
+    <ClInclude Include="Public\NetConnectionManager.hpp" />
+    <ClInclude Include="Public\NetTypes.hpp" />
+    <ClInclude Include="Public\UdpEndpoint.hpp" />
+    <ClInclude Include="Public\UdpServer.hpp" />
+    <ClInclude Include="Public\UdpSocket.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

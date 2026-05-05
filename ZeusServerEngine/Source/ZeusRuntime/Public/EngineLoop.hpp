@@ -5,6 +5,7 @@
 #include "ZeusTypes.hpp"
 
 #include <atomic>
+#include <functional>
 
 namespace Zeus::Runtime
 {
@@ -19,6 +20,9 @@ public:
      * O loop termina quando RequestStop() ou *externalStop fica true.
      */
     void SetExternalStopFlag(std::atomic<bool>* externalStop);
+
+    /** Opcional: chamado no final de cada tick fixo (ex.: `ZeusNet::UdpServer::PumpReceive`). */
+    void SetFixedTickCallback(std::function<void(double fixedDeltaSeconds)> callback);
 
     /** Blocks until RequestStop(); processes fixed ticks and optional idle sleep. */
     void Run();
@@ -36,5 +40,6 @@ private:
     std::atomic<bool> stopRequested_{false};
     std::atomic<bool>* externalStop_ = nullptr;
     Zeus::u64 stubTickCounter_ = 0;
+    std::function<void(double)> fixedTickCallback_;
 };
 } // namespace Zeus::Runtime

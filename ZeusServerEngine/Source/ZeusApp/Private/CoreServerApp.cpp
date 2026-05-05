@@ -1,7 +1,13 @@
 #include "CoreServerApp.hpp"
 
 #include "EngineLoop.hpp"
+#include "NetConnectionManager.hpp"
+#include "PacketParser.hpp"
 #include "PlatformConsoleLive.hpp"
+#include "PlatformTime.hpp"
+#include "SessionManager.hpp"
+#include "SessionPacketHandler.hpp"
+#include "UdpServer.hpp"
 #include "ZeusLog.hpp"
 
 #include <atomic>
@@ -170,6 +176,10 @@ LogLevel ParseLogLevelString(const std::string& s)
 struct CoreServerApp::Impl
 {
     std::unique_ptr<Zeus::Runtime::EngineLoop> loop = std::make_unique<Zeus::Runtime::EngineLoop>();
+    std::unique_ptr<Zeus::Net::UdpServer> udp;
+    Zeus::Net::NetConnectionManager netConnections;
+    Zeus::Session::SessionManager sessions;
+    Zeus::Session::SessionPacketHandler sessionPacketHandler;
     int targetTps = 30;
     bool initialized = false;
     bool shutDownDone = false;
@@ -272,7 +282,63 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
         Zeus::Platform::ConsoleLivePanel::SetSlot(0, "Zeus | reserved for player/replication debug");
     }
 
-    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 foundation).");
+    int listenUdp = 0;
+    (void)ParseJsonIntValue(json, "ListenUdpPort", listenUdp);
+    if (listenUdp > 0 && listenUdp <= 65535)
+    {
+        impl_->udp = std::make_unique<Zeus::Net::UdpServer>();
+        const ZeusResult udpStart = impl_->udp->Start(static_cast<std::uint16_t>(listenUdp));
+        if (!udpStart.Ok())
+        {
+            ZeusLog::Warning("Net", std::string_view(udpStart.GetErrorText()));
+            impl_->udp.reset();
+        }
+        else
+        {
+            const std::string listenLine = std::string("UDP listening on 0.0.0.0:") + std::to_string(listenUdp) + " (clients can connect)";
+            ZeusLog::Info("Net", std::string_view(listenLine));
+            impl_->loop->SetFixedTickCallback([this](const double fixedDeltaSeconds) {
+                (void)fixedDeltaSeconds;
+                if (!impl_->udp)
+                {
+                    return;
+                }
+                const double nowMono = Zeus::Platform::NowMonotonicSeconds();
+                const std::uint64_t wallMs = Zeus::Platform::NowUnixEpochMilliseconds();
+                impl_->udp->PumpReceive([this, nowMono, wallMs](const std::uint8_t* data, const std::size_t n, const Zeus::Net::UdpEndpoint& from) {
+                    Zeus::Protocol::PacketParser::Output parsed{};
+                    const ZeusResult pr = Zeus::Protocol::PacketParser::Parse(data, n, false, parsed);
+                    if (!pr.Ok())
+                    {
+                        return;
+                    }
+                    impl_->sessionPacketHandler.OnDatagram(
+                        *impl_->udp,
+                        impl_->netConnections,
+                        impl_->sessions,
+                        nowMono,
+                        wallMs,
+                        parsed,
+                        from);
+                });
+                impl_->sessionPacketHandler.OnTickTimeouts(impl_->netConnections, impl_->sessions, nowMono);
+            });
+        }
+    }
+    else if (listenUdp != 0)
+    {
+        ZeusLog::Warning(
+            "Net",
+            "ListenUdpPort must be between 1 and 65535. UDP disabled; fix Config/server.json and restart.");
+    }
+    else
+    {
+        ZeusLog::Info(
+            "Net",
+            "UDP disabled (ListenUdpPort=0). Set ListenUdpPort to 1-65535 in Config/server.json to listen for clients.");
+    }
+
+    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 foundation + Part 2 network modules).");
     const std::string tpsLine = "TargetTPS=" + std::to_string(impl_->targetTps);
     ZeusLog::Info("App", std::string_view(tpsLine));
     if (ZeusLog::IsSessionLogOpen())
@@ -301,6 +367,18 @@ void CoreServerApp::Shutdown()
         return;
     }
     impl_->shutDownDone = true;
+
+    if (impl_->loop)
+    {
+        impl_->loop->SetFixedTickCallback({});
+    }
+    if (impl_->udp)
+    {
+        impl_->udp->Stop();
+        impl_->udp.reset();
+    }
+    impl_->sessions.Clear();
+    impl_->netConnections.Clear();
 
 #if defined(_WIN32)
     if (g_consoleHandlerApp == this)

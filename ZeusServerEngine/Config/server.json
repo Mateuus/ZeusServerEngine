@@ -2,5 +2,6 @@
   "TargetTPS": 30,
   "LogLevel": "Info",
   "SessionLogDir": "Logs",
-  "DebugOverlayRows": 0
+  "DebugOverlayRows": 0,
+  "ListenUdpPort": 27777
 }

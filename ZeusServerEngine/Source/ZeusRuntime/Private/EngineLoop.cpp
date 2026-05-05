@@ -23,6 +23,11 @@ void EngineLoop::SetExternalStopFlag(std::atomic<bool>* externalStop)
     externalStop_ = externalStop;
 }
 
+void EngineLoop::SetFixedTickCallback(std::function<void(double fixedDeltaSeconds)> callback)
+{
+    fixedTickCallback_ = std::move(callback);
+}
+
 void EngineLoop::Run()
 {
     Zeus::Platform::SetConsoleTitleUtf8("Zeus Server | iniciando...");
@@ -41,7 +46,12 @@ void EngineLoop::Run()
         const int steps = clock_.Advance(realDt);
         for (int i = 0; i < steps; ++i)
         {
-            FixedUpdate(clock_.GetFixedDeltaSeconds());
+            const double fixedDt = clock_.GetFixedDeltaSeconds();
+            FixedUpdate(fixedDt);
+            if (fixedTickCallback_)
+            {
+                fixedTickCallback_(fixedDt);
+            }
             fixedTicksThisInterval += 1;
         }
 

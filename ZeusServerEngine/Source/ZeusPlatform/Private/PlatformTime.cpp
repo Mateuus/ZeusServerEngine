@@ -1,5 +1,7 @@
 #include "PlatformTime.hpp"
 
+#include <chrono>
+
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -37,4 +39,10 @@ double NowMonotonicSeconds()
     return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) / 1e9;
 }
 #endif
+
+std::uint64_t NowUnixEpochMilliseconds()
+{
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
 } // namespace Zeus::Platform
