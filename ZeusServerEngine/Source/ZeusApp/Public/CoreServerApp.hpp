@@ -22,8 +22,12 @@ public:
     CoreServerApp(const CoreServerApp&) = delete;
     CoreServerApp& operator=(const CoreServerApp&) = delete;
 
-    /** Loads Config/server.json relative to cwd or optional base path. */
-    ZeusResult Initialize(const std::filesystem::path& configPath);
+    /**
+     * Carrega o JSON de configuração. Caminhos relativos em `server.json` (Data, Logs, …)
+     * resolvem-se contra `contentRoot` (raiz típica: pasta com `Config/` e `Data/`).
+     */
+    ZeusResult Initialize(const std::filesystem::path& configPath,
+        const std::filesystem::path& contentRoot);
 
     /** Blocks until shutdown (Ctrl+C or future API). */
     void Run();

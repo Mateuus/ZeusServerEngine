@@ -5,6 +5,7 @@
 #include "SpawnParameters.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <type_traits>
 #include <unordered_map>
@@ -60,6 +61,11 @@ public:
     std::size_t GetPendingDestroyCount() const { return PendingDestroy.size(); }
 
     void BeginPlayAllActors();
+
+    /** Iteracao read-write sobre todos os actors vivos (ignora PendingDestroy). */
+    void ForEachActor(const std::function<void(Actor&)>& fn);
+    /** Iteracao read-only sobre todos os actors vivos. */
+    void ForEachActor(const std::function<void(const Actor&)>& fn) const;
 
 private:
     EntityId AllocateEntityId();

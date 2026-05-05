@@ -55,10 +55,10 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;ZEUS_HAS_JOLT=0;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusWorld\Public;$(SolutionDir)Source\ZeusCollision\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusWorld\Public;$(SolutionDir)Source\ZeusCollision\Public;$(SolutionDir)Source\ZeusGame\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -76,10 +76,10 @@ xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;ZEUS_HAS_JOLT=0;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusWorld\Public;$(SolutionDir)Source\ZeusCollision\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusProtocol\Public;$(SolutionDir)Source\ZeusNet\Public;$(SolutionDir)Source\ZeusSession\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusWorld\Public;$(SolutionDir)Source\ZeusCollision\Public;$(SolutionDir)Source\ZeusGame\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -117,13 +117,18 @@ xcopy /Y /Q "$(SolutionDir)Config\*" "$(OutDir)Config\"</Command>
     <ProjectReference Include="..\ZeusCollision\ZeusCollision.vcxproj">
       <Project>{b0c1d2e3-f4a5-46b7-8c9d-0e1f2a3b4c5d}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\ZeusGame\ZeusGame.vcxproj">
+      <Project>{ad55aa62-f969-48a9-b260-7d28c70ec946}</Project>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\CoreServerApp.cpp" />
     <ClCompile Include="Private\main.cpp" />
+    <ClCompile Include="Private\ServerPaths.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Public\CoreServerApp.hpp" />
+    <ClInclude Include="Public\ServerPaths.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

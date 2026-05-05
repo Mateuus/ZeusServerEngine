@@ -5,6 +5,7 @@
 #include "CollisionDebug.hpp"
 #include "JoltConversion.hpp"
 #include "JoltShapeFactory.hpp"
+#include "TerrainCollisionAsset.hpp"
 
 JPH_SUPPRESS_WARNINGS
 #include <Jolt/Jolt.h>
@@ -22,6 +23,8 @@ JPH_SUPPRESS_WARNINGS
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/ShapeFilter.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -32,11 +35,39 @@ JPH_SUPPRESS_WARNINGS
 #include <cstdio>
 #include <sstream>
 #include <thread>
+#include <unordered_map>
 
 namespace Zeus::Collision
 {
 namespace
 {
+/**
+ * Constroi uma capsula Z-up (eixo principal alinhado com Z, convenção do Zeus).
+ * `JPH::CapsuleShape` em Jolt e Y-up por defeito, logo envolvemos numa
+ * `RotatedTranslatedShape` que aplica uma rotacao de +90 graus em torno do eixo X
+ * (Y → Z). cylHalf e o half-height do CILINDRO central (sem semi-esferas).
+ */
+inline JPH::ShapeRefC MakeZUpCapsule(float cylHalf, float radius)
+{
+    JPH::CapsuleShapeSettings CapSettings(cylHalf, radius);
+    CapSettings.SetEmbedded();
+    JPH::Shape::ShapeResult CapResult = CapSettings.Create();
+    if (CapResult.HasError())
+    {
+        return JPH::ShapeRefC();
+    }
+    JPH::ShapeRefC inner = CapResult.Get();
+    const JPH::Quat Rot = JPH::Quat::sRotation(JPH::Vec3::sAxisX(), 1.5707963267948966f);
+    JPH::RotatedTranslatedShapeSettings RotSettings(JPH::Vec3::sZero(), Rot, inner);
+    RotSettings.SetEmbedded();
+    JPH::Shape::ShapeResult RotResult = RotSettings.Create();
+    if (RotResult.HasError())
+    {
+        return JPH::ShapeRefC();
+    }
+    return RotResult.Get();
+}
+
 namespace Layers
 {
     static constexpr JPH::ObjectLayer NonMoving = 0;
@@ -161,8 +192,12 @@ struct PhysicsWorld::PimplState
     ObjectLayerPairFilterImpl ObjectLayerPairFilter;
     std::unique_ptr<JPH::PhysicsSystem> PhysicsSystem;
 
-    std::vector<JPH::BodyID> Bodies;
-    std::vector<JPH::ShapeRefC> ShapeRefs;
+    /** bodyId (IndexAndSequenceNumber) -> shape ref para manter a vida do shape. */
+    std::unordered_map<std::uint32_t, JPH::ShapeRefC> BodiesShapes;
+
+    /** Counter de Add/Remove desde o ultimo `OptimizeBroadPhase` (debounce). */
+    std::uint32_t PendingChanges = 0;
+    static constexpr std::uint32_t OptimizeThreshold = 64;
 };
 
 PhysicsWorld::PhysicsWorld() = default;
@@ -235,13 +270,15 @@ void PhysicsWorld::Shutdown()
 
     if (State->PhysicsSystem)
     {
-        for (const JPH::BodyID& Id : State->Bodies)
+        JPH::BodyInterface& BodyInterface = State->PhysicsSystem->GetBodyInterface();
+        for (auto& [bodyId, shapeRef] : State->BodiesShapes)
         {
-            State->PhysicsSystem->GetBodyInterface().RemoveBody(Id);
-            State->PhysicsSystem->GetBodyInterface().DestroyBody(Id);
+            JPH::BodyID Id(bodyId);
+            BodyInterface.RemoveBody(Id);
+            BodyInterface.DestroyBody(Id);
         }
-        State->Bodies.clear();
-        State->ShapeRefs.clear();
+        State->BodiesShapes.clear();
+        State->PendingChanges = 0;
         State->PhysicsSystem.reset();
     }
 
@@ -302,9 +339,73 @@ std::uint32_t PhysicsWorld::AddStaticBody(const CollisionShape& shape, const Mat
         return 0;
     }
 
-    State->ShapeRefs.push_back(ShapeRef);
-    State->Bodies.push_back(Id);
-    return Id.GetIndexAndSequenceNumber();
+    const std::uint32_t bodyId = Id.GetIndexAndSequenceNumber();
+    State->BodiesShapes.emplace(bodyId, ShapeRef);
+    ++State->PendingChanges;
+    return bodyId;
+}
+
+std::uint32_t PhysicsWorld::AddStaticBodyForTerrain(const TerrainPiece& piece)
+{
+    if (!IsInitialized())
+    {
+        return 0;
+    }
+
+    JPH::ShapeRefC ShapeRef;
+    if (piece.Kind == ETerrainPieceKind::TriangleMesh)
+    {
+        ShapeRef = JoltShapeFactory::CreateMeshShape(piece);
+    }
+    else if (piece.Kind == ETerrainPieceKind::HeightField)
+    {
+        ShapeRef = JoltShapeFactory::CreateHeightFieldShape(piece);
+    }
+    if (ShapeRef == nullptr)
+    {
+        return 0;
+    }
+
+    const JPH::RVec3 Position = ToJoltPosition(piece.WorldTransform.Location);
+    const JPH::Quat Rotation = ToJoltQuat(piece.WorldTransform.Rotation).Normalized();
+
+    JPH::BodyCreationSettings Settings(ShapeRef, Position, Rotation,
+        JPH::EMotionType::Static, Layers::NonMoving);
+    Settings.mFriction = 0.7f;
+    Settings.mRestitution = 0.0f;
+
+    JPH::BodyInterface& BodyInterface = State->PhysicsSystem->GetBodyInterface();
+    const JPH::BodyID Id = BodyInterface.CreateAndAddBody(Settings, JPH::EActivation::DontActivate);
+    if (Id.IsInvalid())
+    {
+        return 0;
+    }
+    const std::uint32_t bodyId = Id.GetIndexAndSequenceNumber();
+    State->BodiesShapes.emplace(bodyId, ShapeRef);
+    ++State->PendingChanges;
+    return bodyId;
+}
+
+bool PhysicsWorld::RemoveStaticBody(std::uint32_t bodyId)
+{
+    if (!IsInitialized() || bodyId == 0)
+    {
+        return false;
+    }
+
+    const auto it = State->BodiesShapes.find(bodyId);
+    if (it == State->BodiesShapes.end())
+    {
+        return false;
+    }
+
+    JPH::BodyInterface& BodyInterface = State->PhysicsSystem->GetBodyInterface();
+    JPH::BodyID Id(bodyId);
+    BodyInterface.RemoveBody(Id);
+    BodyInterface.DestroyBody(Id);
+    State->BodiesShapes.erase(it);
+    ++State->PendingChanges;
+    return true;
 }
 
 void PhysicsWorld::OptimizeBroadPhase()
@@ -314,6 +415,21 @@ void PhysicsWorld::OptimizeBroadPhase()
         return;
     }
     State->PhysicsSystem->OptimizeBroadPhase();
+    State->PendingChanges = 0;
+}
+
+void PhysicsWorld::OptimizeBroadPhaseIfNeeded()
+{
+    if (!IsInitialized())
+    {
+        return;
+    }
+    if (State->PendingChanges < PimplState::OptimizeThreshold)
+    {
+        return;
+    }
+    State->PhysicsSystem->OptimizeBroadPhase();
+    State->PendingChanges = 0;
 }
 
 void PhysicsWorld::Step(double deltaSeconds)
@@ -388,15 +504,15 @@ bool PhysicsWorld::CollideCapsule(const Math::Vector3& centerCm, double radiusCm
         return false;
     }
     const float radius = static_cast<float>(std::max(0.001, radiusCm * CmToMeters));
-    const float halfHeight = static_cast<float>(std::max(0.001, halfHeightCm * CmToMeters));
-    JPH::CapsuleShapeSettings CapSettings(halfHeight, radius);
-    CapSettings.SetEmbedded();
-    JPH::Shape::ShapeResult CapResult = CapSettings.Create();
-    if (CapResult.HasError())
+    // JPH::CapsuleShapeSettings espera o half-height do cilindro central
+    // (excluindo as semi-esferas). No Zeus convencionamos halfHeightCm como a
+    // metade da altura total da capsula, logo cylHalf = halfHeight - radius.
+    const float cylHalf = static_cast<float>(std::max(0.001, (halfHeightCm - radiusCm) * CmToMeters));
+    JPH::ShapeRefC CapShape = MakeZUpCapsule(cylHalf, radius);
+    if (CapShape == nullptr)
     {
         return false;
     }
-    JPH::ShapeRefC CapShape = CapResult.Get();
 
     JPH::RMat44 Center = JPH::RMat44::sTranslation(ToJoltPosition(centerCm));
     JPH::CollideShapeSettings Settings;
@@ -419,15 +535,90 @@ bool PhysicsWorld::CollideCapsule(const Math::Vector3& centerCm, double radiusCm
     return true;
 }
 
+bool PhysicsWorld::SweepCapsule(const Math::Vector3& centerStartCm, double radiusCm, double halfHeightCm,
+    const Math::Vector3& sweepCm, SweepHit& outHit) const
+{
+    outHit = SweepHit{};
+    if (!IsInitialized())
+    {
+        return false;
+    }
+
+    const double sweepLenCm = sweepCm.Length();
+    if (sweepLenCm <= 1e-6)
+    {
+        return false;
+    }
+
+    const float radius = static_cast<float>(std::max(0.001, radiusCm * CmToMeters));
+    // half-height do cilindro = halfHeightTotal - radius (ver `CollideCapsule`).
+    const float cylHalf = static_cast<float>(std::max(0.001, (halfHeightCm - radiusCm) * CmToMeters));
+    JPH::ShapeRefC CapShape = MakeZUpCapsule(cylHalf, radius);
+    if (CapShape == nullptr)
+    {
+        return false;
+    }
+
+    const JPH::RVec3 startPos = ToJoltPosition(centerStartCm);
+    const JPH::Vec3 directionMeters = ToJoltVec3(sweepCm);
+
+    JPH::RShapeCast Cast = JPH::RShapeCast::sFromWorldTransform(
+        CapShape.GetPtr(), JPH::Vec3::sReplicate(1.0f),
+        JPH::RMat44::sTranslation(startPos), directionMeters);
+
+    JPH::ShapeCastSettings Settings;
+    // Para character movement queremos detectar inicio penetrante (overlap)
+    // como hit em fraction=0 com normal valida — isto evita que a capsula
+    // "passe a tangenciar" geometria fina e nao seja parada.
+    Settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
+    Settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+    Settings.mReturnDeepestPoint = true;
+    Settings.mUseShrunkenShapeAndConvexRadius = false;
+    Settings.mActiveEdgeMode = JPH::EActiveEdgeMode::CollideWithAll;
+
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> Collector;
+    State->PhysicsSystem->GetNarrowPhaseQuery().CastShape(
+        Cast, Settings, JPH::RVec3::sZero(), Collector);
+
+    if (!Collector.HadHit())
+    {
+        return false;
+    }
+
+    const JPH::ShapeCastResult& Hit = Collector.mHit;
+    outHit.bHit = true;
+    outHit.Fraction = static_cast<double>(Hit.mFraction);
+    outHit.Distance = outHit.Fraction * sweepLenCm;
+    outHit.ImpactPoint = FromJoltPosition(Hit.mContactPointOn2);
+    outHit.BodyId = Hit.mBodyID2.GetIndexAndSequenceNumber();
+
+    // mPenetrationAxis aponta de shape1 (capsula) para shape2 (mundo). Negar
+    // para obter a normal do mundo a apontar para a capsula (convenção comum
+    // em movement code).
+    JPH::Vec3 axis = Hit.mPenetrationAxis;
+    if (axis.LengthSq() > 1e-6f)
+    {
+        axis = axis.Normalized();
+    }
+    Math::Vector3 normalCm = FromJoltVec3(-axis);
+    if (normalCm.LengthSquared() > 1e-12)
+    {
+        normalCm = normalCm.Normalized();
+    }
+    outHit.ImpactNormal = normalCm;
+    return true;
+}
+
 std::size_t PhysicsWorld::GetBodyCount() const
 {
-    return State ? State->Bodies.size() : 0;
+    return State ? State->BodiesShapes.size() : 0;
 }
 } // namespace Zeus::Collision
 
 #else // ZEUS_HAS_JOLT == 0
 
 #include "CollisionDebug.hpp"
+#include "TerrainCollisionAsset.hpp"
 
 namespace Zeus::Collision
 {
@@ -445,7 +636,10 @@ bool PhysicsWorld::Initialize()
 void PhysicsWorld::Shutdown() {}
 bool PhysicsWorld::IsInitialized() const { return false; }
 std::uint32_t PhysicsWorld::AddStaticBody(const CollisionShape&, const Math::Transform&) { return 0; }
+std::uint32_t PhysicsWorld::AddStaticBodyForTerrain(const TerrainPiece&) { return 0; }
+bool PhysicsWorld::RemoveStaticBody(std::uint32_t) { return false; }
 void PhysicsWorld::OptimizeBroadPhase() {}
+void PhysicsWorld::OptimizeBroadPhaseIfNeeded() {}
 void PhysicsWorld::Step(double) {}
 bool PhysicsWorld::Raycast(const Math::Vector3&, const Math::Vector3&, double, RaycastHit& out) const
 {
@@ -460,6 +654,11 @@ bool PhysicsWorld::RaycastDown(const Math::Vector3&, double, RaycastHit& out) co
 bool PhysicsWorld::CollideCapsule(const Math::Vector3&, double, double, ContactInfo& out) const
 {
     out = ContactInfo{};
+    return false;
+}
+bool PhysicsWorld::SweepCapsule(const Math::Vector3&, double, double, const Math::Vector3&, SweepHit& out) const
+{
+    out = SweepHit{};
     return false;
 }
 std::size_t PhysicsWorld::GetBodyCount() const { return 0; }

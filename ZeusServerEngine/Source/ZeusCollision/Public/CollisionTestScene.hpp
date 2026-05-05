@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CollisionAsset.hpp"
+#include "DynamicCollisionAsset.hpp"
+#include "TerrainCollisionAsset.hpp"
 
 #include <cstddef>
 #include <string>
@@ -9,6 +11,7 @@
 namespace Zeus::Collision
 {
 class CollisionWorld;
+class DynamicCollisionWorld;
 
 /** Resultado de um único cenário do smoke test. */
 struct TestScenarioResult
@@ -43,7 +46,20 @@ public:
     /** Constrói um asset programático com chão + parede + rampa válida + rampa íngreme. */
     static CollisionAsset BuildProgrammaticAsset();
 
-    /** Roda os cenários no `CollisionWorld` corrente. Loga os resultados. */
+    /** Asset dinamico com 1 trigger ([±200,±200,±150]) e EventTag "trigger_a". */
+    static DynamicCollisionAsset BuildProgrammaticDynamicAsset();
+
+    /**
+     * Terrain asset com 1 HeightField plano (10x10) — `RaycastDown` deve
+     * devolver normal Z=+1 sobre ele.
+     */
+    static TerrainCollisionAsset BuildProgrammaticTerrainAsset();
+
+    /** Roda os cenarios no `CollisionWorld` corrente. Loga os resultados. */
     static TestSceneReport RunAll(CollisionWorld& world);
+
+    /** Cenarios adicionais para o streaming/dynamic/terrain (TC-06..TC-09). */
+    static TestSceneReport RunStreamingScenarios(CollisionWorld& world,
+        DynamicCollisionWorld* dynamicWorld);
 };
 } // namespace Zeus::Collision

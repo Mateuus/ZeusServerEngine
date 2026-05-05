@@ -13,8 +13,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}</ProjectGuid>
-    <RootNamespace>ZeusCollision</RootNamespace>
+    <ProjectGuid>{AD55AA62-F969-48A9-B260-7D28C70EC946}</ProjectGuid>
+    <RootNamespace>ZeusGame</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -53,11 +53,10 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>_DEBUG;_LIB;ZEUS_HAS_JOLT=1;JPH_OBJECT_LAYER_BITS=16;JPH_OBJECT_STREAM;JPH_DEBUG_RENDERER;JPH_PROFILE_ENABLED;JPH_FLOATING_POINT_EXCEPTIONS_ENABLED;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)ThirdParty\JoltPhysics;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/fp:except- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusCollision\Public;$(SolutionDir)Source\ZeusWorld\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -66,11 +65,10 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>NDEBUG;_LIB;ZEUS_HAS_JOLT=1;JPH_OBJECT_LAYER_BITS=16;JPH_OBJECT_STREAM;JPH_DEBUG_RENDERER;JPH_PROFILE_ENABLED;JPH_FLOATING_POINT_EXCEPTIONS_ENABLED;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)ThirdParty\JoltPhysics;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/fp:except- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusCollision\Public;$(SolutionDir)Source\ZeusWorld\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -78,49 +76,29 @@
       <Project>{a6519f9a-435b-4b63-9b9f-2dce2e78b123}</Project>
     </ProjectReference>
     <ProjectReference Include="..\ZeusMath\ZeusMath.vcxproj">
-      <Project>{e1e2e3e4-e5e6-47a0-b1c2-d3e4f5a60780}</Project>
+      <Project>{E1E2E3E4-E5E6-47A0-B1C2-D3E4F5A60780}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\ZeusPlatform\ZeusPlatform.vcxproj">
-      <Project>{b7620b1c-546d-4c7e-af12-3edf4c88a456}</Project>
+    <ProjectReference Include="..\ZeusRuntime\ZeusRuntime.vcxproj">
+      <Project>{c8731d2e-657e-4d8f-b023-4fe05d99b567}</Project>
     </ProjectReference>
-    <ProjectReference Include="..\..\ThirdParty\JoltPhysics\JoltPhysics.vcxproj">
-      <Project>{c3a91f12-8b4e-4d2a-9f01-7e6d5c4b3a90}</Project>
+    <ProjectReference Include="..\ZeusCollision\ZeusCollision.vcxproj">
+      <Project>{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\ZeusWorld\ZeusWorld.vcxproj">
+      <Project>{F2F3F4F5-F6F7-48A1-B2C3-D4E5F6A70891}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Private\CollisionAsset.cpp" />
-    <ClCompile Include="Private\CollisionDebug.cpp" />
-    <ClCompile Include="Private\CollisionTestScene.cpp" />
-    <ClCompile Include="Private\CollisionWorld.cpp" />
-    <ClCompile Include="Private\DynamicCollisionWorld.cpp" />
-    <ClCompile Include="Private\JoltConversion.cpp" />
-    <ClCompile Include="Private\JoltShapeFactory.cpp" />
-    <ClCompile Include="Private\PhysicsWorld.cpp" />
-    <ClCompile Include="Private\ZsmCollisionLoader.cpp" />
-    <ClCompile Include="Private\ZsmDynamicLoader.cpp" />
-    <ClCompile Include="Private\ZsmTerrainLoader.cpp" />
+    <ClCompile Include="Private\Entities\CharacterActor.cpp" />
+    <ClCompile Include="Private\Movement\MovementComponent.cpp" />
+    <ClCompile Include="Private\Movement\MovementSystem.cpp" />
+    <ClCompile Include="Private\Movement\MovementTests.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Public\CollisionAsset.hpp" />
-    <ClInclude Include="Public\CollisionDebug.hpp" />
-    <ClInclude Include="Public\CollisionEntity.hpp" />
-    <ClInclude Include="Public\CollisionShape.hpp" />
-    <ClInclude Include="Public\CollisionShapeType.hpp" />
-    <ClInclude Include="Public\CollisionTestScene.hpp" />
-    <ClInclude Include="Public\CollisionWorld.hpp" />
-    <ClInclude Include="Public\DynamicCollisionAsset.hpp" />
-    <ClInclude Include="Public\DynamicCollisionWorld.hpp" />
-    <ClInclude Include="Public\JoltConversion.hpp" />
-    <ClInclude Include="Public\JoltShapeFactory.hpp" />
-    <ClInclude Include="Public\PhysicsWorld.hpp" />
-    <ClInclude Include="Public\TerrainCollisionAsset.hpp" />
-    <ClInclude Include="Public\ZsmBinReader.hpp" />
-    <ClInclude Include="Public\ZsmCollisionFormat.hpp" />
-    <ClInclude Include="Public\ZsmCollisionLoader.hpp" />
-    <ClInclude Include="Public\ZsmDynamicFormat.hpp" />
-    <ClInclude Include="Public\ZsmDynamicLoader.hpp" />
-    <ClInclude Include="Public\ZsmTerrainFormat.hpp" />
-    <ClInclude Include="Public\ZsmTerrainLoader.hpp" />
+    <ClInclude Include="Public\Entities\CharacterActor.hpp" />
+    <ClInclude Include="Public\Movement\MovementComponent.hpp" />
+    <ClInclude Include="Public\Movement\MovementSystem.hpp" />
+    <ClInclude Include="Public\Movement\MovementTests.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

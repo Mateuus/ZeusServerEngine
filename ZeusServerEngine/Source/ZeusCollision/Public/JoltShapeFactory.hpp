@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CollisionShape.hpp"
+#include "TerrainCollisionAsset.hpp"
 
 #if defined(ZEUS_HAS_JOLT) && ZEUS_HAS_JOLT
 
@@ -22,6 +23,12 @@ class JoltShapeFactory
 public:
     /** Devolve um shape Jolt válido ou `nullptr` se não for possível converter. */
     static JPH::ShapeRefC CreateShape(const CollisionShape& shape);
+
+    /** TriangleMesh em metros (ja com scale aplicado por vertice). */
+    static JPH::ShapeRefC CreateMeshShape(const TerrainPiece& piece);
+
+    /** HeightField regular grid; height samples ja em metros. */
+    static JPH::ShapeRefC CreateHeightFieldShape(const TerrainPiece& piece);
 };
 } // namespace Zeus::Collision
 

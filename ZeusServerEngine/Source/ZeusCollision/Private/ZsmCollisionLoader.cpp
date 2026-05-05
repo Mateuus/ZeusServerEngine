@@ -349,6 +349,8 @@ ZsmLoadResult ZsmCollisionLoader::LoadFromBytes(const std::uint8_t* data, std::s
         Result.Warnings.push_back("Header shapeCount differs from parsed shapes");
     }
 
+    RebuildEntityIndexByRegion(outAsset);
+
     Result.bSuccess = true;
     return Result;
 }

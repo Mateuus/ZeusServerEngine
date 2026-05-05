@@ -15,6 +15,7 @@ set(ZEUS_RUNTIME_PUBLIC ${ZEUS_ROOT}/Source/ZeusRuntime/Public)
 set(ZEUS_MATH_PUBLIC ${ZEUS_ROOT}/Source/ZeusMath/Public)
 set(ZEUS_WORLD_PUBLIC ${ZEUS_ROOT}/Source/ZeusWorld/Public)
 set(ZEUS_COLLISION_PUBLIC ${ZEUS_ROOT}/Source/ZeusCollision/Public)
+set(ZEUS_GAME_PUBLIC ${ZEUS_ROOT}/Source/ZeusGame/Public)
 set(ZEUS_APP_PUBLIC ${ZEUS_ROOT}/Source/ZeusApp/Public)
 
 option(ZEUS_USE_JOLT "Enable Jolt Physics integration in ZeusCollision." ON)
@@ -147,30 +148,15 @@ add_library(ZeusMath STATIC
 target_include_directories(ZeusMath PUBLIC ${ZEUS_MATH_PUBLIC} ${ZEUS_CORE_PUBLIC})
 target_link_libraries(ZeusMath PUBLIC ZeusCore)
 
-add_library(ZeusWorld STATIC
-    Source/ZeusWorld/Private/Actor.cpp
-    Source/ZeusWorld/Private/ActorComponent.cpp
-    Source/ZeusWorld/Private/EntityManager.cpp
-    Source/ZeusWorld/Private/Level.cpp
-    Source/ZeusWorld/Private/MapInstance.cpp
-    Source/ZeusWorld/Private/World.cpp
-    Source/ZeusWorld/Private/WorldRuntime.cpp
-    Source/ZeusWorld/Private/WorldStats.cpp
-)
-target_include_directories(ZeusWorld PUBLIC
-    ${ZEUS_WORLD_PUBLIC}
-    ${ZEUS_CORE_PUBLIC}
-    ${ZEUS_MATH_PUBLIC}
-    ${ZEUS_RUNTIME_PUBLIC}
-    ${ZEUS_PLATFORM_PUBLIC}
-)
-target_link_libraries(ZeusWorld PUBLIC ZeusCore ZeusMath ZeusRuntime)
-
 # ---- ZeusCollision -----------------------------------------------------------
 add_library(ZeusCollision STATIC
+    Source/ZeusCollision/Private/CollisionAsset.cpp
     Source/ZeusCollision/Private/ZsmCollisionLoader.cpp
+    Source/ZeusCollision/Private/ZsmDynamicLoader.cpp
+    Source/ZeusCollision/Private/ZsmTerrainLoader.cpp
     Source/ZeusCollision/Private/CollisionDebug.cpp
     Source/ZeusCollision/Private/CollisionWorld.cpp
+    Source/ZeusCollision/Private/DynamicCollisionWorld.cpp
     Source/ZeusCollision/Private/CollisionTestScene.cpp
 )
 target_include_directories(ZeusCollision PUBLIC
@@ -180,6 +166,46 @@ target_include_directories(ZeusCollision PUBLIC
     ${ZEUS_PLATFORM_PUBLIC}
 )
 target_link_libraries(ZeusCollision PUBLIC ZeusCore ZeusMath ZeusPlatform)
+
+add_library(ZeusWorld STATIC
+    Source/ZeusWorld/Private/Actor.cpp
+    Source/ZeusWorld/Private/ActorComponent.cpp
+    Source/ZeusWorld/Private/DebugPlayerActor.cpp
+    Source/ZeusWorld/Private/EntityManager.cpp
+    Source/ZeusWorld/Private/Level.cpp
+    Source/ZeusWorld/Private/MapInstance.cpp
+    Source/ZeusWorld/Private/RegionSystemTests.cpp
+    Source/ZeusWorld/Private/World.cpp
+    Source/ZeusWorld/Private/WorldRuntime.cpp
+    Source/ZeusWorld/Private/WorldStats.cpp
+    Source/ZeusWorld/Private/ZeusRegionSystem.cpp
+)
+target_include_directories(ZeusWorld PUBLIC
+    ${ZEUS_WORLD_PUBLIC}
+    ${ZEUS_CORE_PUBLIC}
+    ${ZEUS_MATH_PUBLIC}
+    ${ZEUS_RUNTIME_PUBLIC}
+    ${ZEUS_PLATFORM_PUBLIC}
+    ${ZEUS_COLLISION_PUBLIC}
+)
+target_link_libraries(ZeusWorld PUBLIC ZeusCore ZeusMath ZeusRuntime ZeusCollision)
+
+# ---- ZeusGame (gameplay subsystems: Entities + Movement) --------------------
+add_library(ZeusGame STATIC
+    Source/ZeusGame/Private/Entities/CharacterActor.cpp
+    Source/ZeusGame/Private/Movement/MovementComponent.cpp
+    Source/ZeusGame/Private/Movement/MovementSystem.cpp
+    Source/ZeusGame/Private/Movement/MovementTests.cpp
+)
+target_include_directories(ZeusGame PUBLIC
+    ${ZEUS_GAME_PUBLIC}
+    ${ZEUS_CORE_PUBLIC}
+    ${ZEUS_MATH_PUBLIC}
+    ${ZEUS_PLATFORM_PUBLIC}
+    ${ZEUS_COLLISION_PUBLIC}
+    ${ZEUS_WORLD_PUBLIC}
+)
+target_link_libraries(ZeusGame PUBLIC ZeusCore ZeusMath ZeusPlatform ZeusCollision ZeusWorld)
 
 if(ZEUS_USE_JOLT)
     target_sources(ZeusCollision PRIVATE
@@ -196,6 +222,7 @@ endif()
 add_executable(ZeusServer
     Source/ZeusApp/Private/main.cpp
     Source/ZeusApp/Private/CoreServerApp.cpp
+    Source/ZeusApp/Private/ServerPaths.cpp
 )
 target_include_directories(ZeusServer PRIVATE
     ${ZEUS_APP_PUBLIC}
@@ -208,8 +235,23 @@ target_include_directories(ZeusServer PRIVATE
     ${ZEUS_MATH_PUBLIC}
     ${ZEUS_WORLD_PUBLIC}
     ${ZEUS_COLLISION_PUBLIC}
+    ${ZEUS_GAME_PUBLIC}
 )
-target_link_libraries(ZeusServer PRIVATE ZeusCollision ZeusWorld ZeusMath ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
+target_link_libraries(ZeusServer PRIVATE ZeusGame ZeusCollision ZeusWorld ZeusMath ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
+
+# Mantém o layout de runtime no output do build (build/Debug, build/Release, etc.)
+# copiando Config/ e Data/ da raiz do motor a cada build do ZeusServer.
+add_custom_command(TARGET ZeusServer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ZeusServer>/Config"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:ZeusServer>/Data"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${ZEUS_ROOT}/Config"
+        "$<TARGET_FILE_DIR:ZeusServer>/Config"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${ZEUS_ROOT}/Data"
+        "$<TARGET_FILE_DIR:ZeusServer>/Data"
+    COMMENT "Copying Config and Data folders to ZeusServer output"
+)
 
 if(UNIX AND NOT APPLE)
     target_compile_definitions(ZeusPlatform PRIVATE _GNU_SOURCE)

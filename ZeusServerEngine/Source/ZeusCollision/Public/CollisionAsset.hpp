@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Zeus::Collision
@@ -38,5 +39,16 @@ struct CollisionAsset
     std::vector<CollisionEntity> Entities;
     CollisionAssetStats Stats;
     std::vector<std::string> Warnings;
+
+    /**
+     * Index auxiliar populado pelo loader/`LoadFromAsset`: mapeia `RegionId`
+     * para os indices de `Entities` que pertencem a essa regiao. Custo `O(N)` no
+     * arranque, mas torna `LoadRegion`/`UnloadRegion` em runtime `O(K)` onde K
+     * sao apenas as entidades da regiao a (des)carregar.
+     */
+    std::unordered_map<std::uint32_t, std::vector<std::size_t>> EntityIndexByRegion;
 };
+
+/** Reconstroi `EntityIndexByRegion` a partir de `Entities` (idempotente). */
+void RebuildEntityIndexByRegion(CollisionAsset& asset);
 } // namespace Zeus::Collision

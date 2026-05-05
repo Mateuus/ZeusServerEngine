@@ -97,6 +97,40 @@ void EntityManager::BeginPlayAllActors()
     }
 }
 
+void EntityManager::ForEachActor(const std::function<void(Actor&)>& fn)
+{
+    if (!fn)
+    {
+        return;
+    }
+    for (auto& kv : Actors)
+    {
+        Actor* a = kv.second.get();
+        if (a == nullptr || a->IsPendingDestroy())
+        {
+            continue;
+        }
+        fn(*a);
+    }
+}
+
+void EntityManager::ForEachActor(const std::function<void(const Actor&)>& fn) const
+{
+    if (!fn)
+    {
+        return;
+    }
+    for (const auto& kv : Actors)
+    {
+        const Actor* a = kv.second.get();
+        if (a == nullptr || a->IsPendingDestroy())
+        {
+            continue;
+        }
+        fn(*a);
+    }
+}
+
 EntityId EntityManager::AllocateEntityId()
 {
     return NextEntityId++;

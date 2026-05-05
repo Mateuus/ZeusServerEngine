@@ -25,6 +25,35 @@
     "RunCollisionSmokeTest": false,
     "CollisionFileByMap": {
       "TestWorld": "Data/Maps/TestWorld/static_collision.zsm"
+    },
+    "DynamicCollisionFileByMap": {
+      "TestWorld": "Data/Maps/TestWorld/dynamic_collision.zsm"
+    },
+    "TerrainCollisionFileByMap": {
+      "TestWorld": "Data/Maps/TestWorld/terrain_collision.zsm"
     }
+  },
+  "RegionStreaming": {
+    "Enabled": false,
+    "StreamingRadiusCm": 7500,
+    "UnloadHysteresisCm": 1500,
+    "MaxLoadsPerTick": 4,
+    "MaxUnloadsPerTick": 4
+  },
+  "DebugPlayer": {
+    "Enabled": false,
+    "SpeedCmS": 600,
+    "Waypoints": [[0,0,90],[10000,0,90],[10000,10000,90],[0,10000,90]]
+  },
+  "Movement": {
+    "Enabled": true,
+    "RunSmokeTests": true,
+    "SpawnDebugCharacter": false,
+    "GravityZ": -980.0,
+    "MaxSlopeAngleDeg": 45.0,
+    "StepHeightCm": 45.0,
+    "DefaultSpeedCmS": 600.0,
+    "JumpVelocityCmS": 600.0,
+    "Capsule": { "RadiusCm": 34.0, "HalfHeightCm": 88.0 }
   }
 }

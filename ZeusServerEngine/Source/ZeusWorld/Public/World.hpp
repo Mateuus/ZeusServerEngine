@@ -4,8 +4,10 @@
 #include "Level.hpp"
 #include "SpawnParameters.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace Zeus::World
@@ -25,7 +27,21 @@ public:
     double GetTimeSeconds() const { return TimeSeconds; }
 
     Actor* SpawnActor(const SpawnParameters& params);
+
+    /** Spawn tipado para actors derivados (chama o construtor padrao do tipo). */
+    template<typename TActor>
+    TActor* SpawnActorTyped(const SpawnParameters& params, bool beginPlayImmediately = true)
+    {
+        static_assert(std::is_base_of_v<Actor, TActor>, "TActor must derive from Actor");
+        return Entities.SpawnActor<TActor>(this, params,
+            beginPlayImmediately && bBegunPlay);
+    }
+
     bool DestroyActor(EntityId id);
+
+    /** Forwarder publico para iteracao read-only sobre todos os actors vivos. */
+    void ForEachActor(const std::function<void(Actor&)>& fn) { Entities.ForEachActor(fn); }
+    void ForEachActor(const std::function<void(const Actor&)>& fn) const { Entities.ForEachActor(fn); }
 
     bool HasBegunPlay() const { return bBegunPlay; }
 

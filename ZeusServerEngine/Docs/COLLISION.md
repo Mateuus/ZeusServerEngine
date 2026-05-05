@@ -4,6 +4,10 @@ Este documento descreve a fundação de colisão autoritativa do Zeus Server Eng
 
 A Parte 4 prova apenas o pipeline `Unreal → ZSM → Jolt`, com smoke tests de chão / parede / rampas. Movimento real, character controller, predição e replicação ficam para a Parte 5.
 
+**Parte 4.5** (streaming, `dynamic_collision.zsm`, `terrain_collision.zsm`, `ZeusRegionSystem`): ver [COLLISION_STREAMING.md](COLLISION_STREAMING.md) e ADR **0013** em `.brain/decisoes/adrs/`.
+
+**Parte 5** (Movement foundation: cápsula servidor-only + sweep & slide + gravidade + step up no `MovementComponent` do novo módulo `ZeusGame`): ver [MOVEMENT.md](MOVEMENT.md) e ADR **0014**. Inclui o sweep `PhysicsWorld::SweepCapsule` (Jolt `CastShape`).
+
 ---
 
 ## 1. Princípios
@@ -218,8 +222,7 @@ Ordem em `CoreServerApp::Initialize`:
 
 ## 8. Limites e próximos passos
 
-- Apenas `static_collision.zsm`. Sem `dynamic_collision.zsm` nem volumes (water/lava). Reservado para Parte 4.5.
-- Sem `TriangleMesh` / `HeightField` (terreno). Reservado para Parte 4.5.
-- Sem `World Partition` server-side. `RegionId/GridX/Y/Z` ficam preparados; `LoadRegion`/`UnloadRegion` ficam para `ZeusRegionSystem`.
-- Sem `Character Controller`. As colisões existem; quem usa elas (movimento, prediction, replicação) entra na Parte 5.
+- A Parte 4.5 entregou `dynamic_collision.zsm`, `terrain_collision.zsm`, streaming por região e export estendido; detalhe em [COLLISION_STREAMING.md](COLLISION_STREAMING.md).
+- **`physics_settings.json`** (gravidade, materiais, escalas globais) e encadeamento gameplay de eventos de volume ficam para **BL-004** / Parte 5.
+- Sem `Character Controller` completo: `DebugPlayerActor` serve apenas para validar streaming.
 - Sem profiling Jolt (`JPH_PROFILE_ENABLED` desactivado). Pode ser ligado em build de diagnóstico.

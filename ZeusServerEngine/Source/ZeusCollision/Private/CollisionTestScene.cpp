@@ -2,6 +2,7 @@
 
 #include "CollisionDebug.hpp"
 #include "CollisionWorld.hpp"
+#include "DynamicCollisionWorld.hpp"
 #include "MathConstants.hpp"
 #include "MathUtils.hpp"
 #include "Quaternion.hpp"
@@ -102,6 +103,97 @@ CollisionAsset CollisionTestScene::BuildProgrammaticAsset()
     Asset.Stats.EntityCount = Asset.Entities.size();
     Asset.Stats.ShapeCount = Asset.Entities.size();
     Asset.Stats.BoxCount = Asset.Entities.size();
+
+    // Hash do RegionId compatível com o exporter Unreal e o ZeusRegionSystem.
+    auto computeRegion = [](const Math::Vector3& center, double regionSize) -> EntityRegion {
+        EntityRegion R;
+        R.RegionSizeCm = regionSize;
+        R.GridX = static_cast<std::int32_t>(std::floor(center.X / regionSize));
+        R.GridY = static_cast<std::int32_t>(std::floor(center.Y / regionSize));
+        R.GridZ = static_cast<std::int32_t>(std::floor(center.Z / regionSize));
+        const std::uint32_t Hx = static_cast<std::uint32_t>(R.GridX) * 73856093u;
+        const std::uint32_t Hy = static_cast<std::uint32_t>(R.GridY) * 19349663u;
+        const std::uint32_t Hz = static_cast<std::uint32_t>(R.GridZ) * 83492791u;
+        R.RegionId = (Hx ^ Hy ^ Hz);
+        return R;
+    };
+    for (CollisionEntity& E : Asset.Entities)
+    {
+        E.Region = computeRegion(E.BoundsCenter, Asset.RegionSizeCm);
+    }
+    RebuildEntityIndexByRegion(Asset);
+    return Asset;
+}
+
+DynamicCollisionAsset CollisionTestScene::BuildProgrammaticDynamicAsset()
+{
+    DynamicCollisionAsset Asset;
+    Asset.MapName = "TestWorld_Dynamic";
+    Asset.RegionSizeCm = 5000.0;
+    Asset.Version = 1;
+
+    DynamicVolume V;
+    V.Name = "TriggerA";
+    V.ActorName = "TriggerA_Actor";
+    V.Kind = EDynamicVolumeKind::Trigger;
+    V.EventTag = "trigger_a";
+    V.WorldTransform = Math::Transform(Math::Vector3(0.0, 0.0, 100.0),
+        Math::Quaternion::Identity, Math::Vector3::One);
+    V.BoundsCenter = Math::Vector3(0.0, 0.0, 100.0);
+    V.BoundsExtent = Math::Vector3(200.0, 200.0, 150.0);
+
+    CollisionShape Box;
+    Box.Type = ECollisionShapeType::Box;
+    Box.LocalTransform = Math::Transform::Identity;
+    Box.Box.HalfExtents = Math::Vector3(200.0, 200.0, 150.0);
+    V.Shapes.push_back(std::move(Box));
+
+    V.Region.RegionSizeCm = Asset.RegionSizeCm;
+    V.Region.GridX = 0;
+    V.Region.GridY = 0;
+    V.Region.GridZ = 0;
+    V.Region.RegionId = 0;
+
+    Asset.Volumes.push_back(std::move(V));
+    Asset.Stats.VolumeCount = Asset.Volumes.size();
+    Asset.Stats.ShapeCount = 1;
+    Asset.Stats.TriggerCount = 1;
+    RebuildDynamicVolumeIndexByRegion(Asset);
+    return Asset;
+}
+
+TerrainCollisionAsset CollisionTestScene::BuildProgrammaticTerrainAsset()
+{
+    TerrainCollisionAsset Asset;
+    Asset.MapName = "TestWorld_Terrain";
+    Asset.RegionSizeCm = 5000.0;
+    Asset.Version = 1;
+
+    TerrainPiece Piece;
+    Piece.Name = "FlatHeightField";
+    Piece.ActorName = "Landscape0";
+    Piece.ComponentName = "LandscapeComponent0";
+    Piece.Kind = ETerrainPieceKind::HeightField;
+    Piece.WorldTransform = Math::Transform(Math::Vector3(-3000.0, -3000.0, -50.0),
+        Math::Quaternion::Identity, Math::Vector3::One);
+    Piece.BoundsCenter = Math::Vector3(0.0, 0.0, -50.0);
+    Piece.BoundsExtent = Math::Vector3(3000.0, 3000.0, 50.0);
+    Piece.Region.RegionSizeCm = Asset.RegionSizeCm;
+
+    constexpr std::uint32_t SX = 16;
+    constexpr std::uint32_t SY = 16;
+    Piece.HeightField.SamplesX = SX;
+    Piece.HeightField.SamplesY = SY;
+    Piece.HeightField.SampleSpacingCm = 400.0; // 16 samples * 400 cm = 6400 cm wide
+    Piece.HeightField.OriginLocal = Math::Vector3::Zero;
+    Piece.HeightField.HeightScaleCm = 1.0;
+    Piece.HeightField.Heights.assign(SX * SY, 0.0f);
+
+    Asset.Pieces.push_back(std::move(Piece));
+    Asset.Stats.PieceCount = 1;
+    Asset.Stats.HeightFieldCount = 1;
+    Asset.Stats.TotalHeightSampleCount = SX * SY;
+    RebuildTerrainPieceIndexByRegion(Asset);
     return Asset;
 }
 
@@ -175,6 +267,137 @@ TestSceneReport CollisionTestScene::RunAll(CollisionWorld& world)
 
     std::ostringstream summary;
     summary << "[CollisionTest] Summary passed=" << Report.PassedCount
+            << " failed=" << Report.FailedCount;
+    if (Report.FailedCount == 0)
+    {
+        CollisionDebug::LogInfo("CollisionTest", summary.str());
+    }
+    else
+    {
+        CollisionDebug::LogWarn("CollisionTest", summary.str());
+    }
+    return Report;
+}
+
+TestSceneReport CollisionTestScene::RunStreamingScenarios(CollisionWorld& world,
+    DynamicCollisionWorld* dynamicWorld)
+{
+    TestSceneReport Report;
+
+    // --- TC-06 LoadRegion / UnloadRegion (counters) --------------------------
+    {
+        const auto& asset = world.GetAsset();
+        if (asset.EntityIndexByRegion.empty())
+        {
+            RecordResult(Report, "TC-06 LoadRegion / UnloadRegion", false,
+                "(no regions in asset)");
+        }
+        else
+        {
+            const std::uint32_t regionId = asset.EntityIndexByRegion.begin()->first;
+            const std::size_t expectedShapesInRegion = [&]() {
+                std::size_t total = 0;
+                for (std::size_t entityIdx : asset.EntityIndexByRegion.at(regionId))
+                {
+                    total += asset.Entities[entityIdx].Shapes.size();
+                }
+                return total;
+            }();
+
+            // Garante que esta carregada e tem bodies; o CoreServerApp em modo
+            // build-all ja chamou BuildPhysicsWorld. Forcamos load de novo (idempotente).
+            world.LoadRegion(regionId);
+            const std::size_t bodiesAfterLoad = world.GetBodiesInRegion(regionId);
+            world.UnloadRegion(regionId);
+            const std::size_t bodiesAfterUnload = world.GetBodiesInRegion(regionId);
+
+            const bool bPass = bodiesAfterLoad == expectedShapesInRegion && bodiesAfterUnload == 0;
+            std::ostringstream det;
+            det << "(load=" << bodiesAfterLoad << " expected=" << expectedShapesInRegion
+                << " unload=" << bodiesAfterUnload << ")";
+            RecordResult(Report, "TC-06 LoadRegion / UnloadRegion", bPass, det.str());
+
+            // Restaura para nao deixar a regiao descarregada nos testes seguintes.
+            world.LoadRegion(regionId);
+        }
+    }
+
+    // --- TC-07 Load+Unload+Load consistency for RaycastDown ------------------
+    {
+        const auto& asset = world.GetAsset();
+        std::uint32_t regionContainingFloor = 0;
+        for (const CollisionEntity& E : asset.Entities)
+        {
+            if (E.Name == "Floor")
+            {
+                regionContainingFloor = E.Region.RegionId;
+                break;
+            }
+        }
+        const Math::Vector3 origin(0.0, 0.0, 200.0);
+        RaycastHit hit1, hit2;
+        const bool h1 = world.GetPhysicsWorld().RaycastDown(origin, 500.0, hit1);
+        world.UnloadRegion(regionContainingFloor);
+        world.LoadRegion(regionContainingFloor);
+        const bool h2 = world.GetPhysicsWorld().RaycastDown(origin, 500.0, hit2);
+        const bool bPass = h1 && h2 &&
+            std::abs(hit1.Distance - hit2.Distance) < 1.0;
+        std::ostringstream det;
+        det << "(d1=" << hit1.Distance << " d2=" << hit2.Distance << ")";
+        RecordResult(Report, "TC-07 Load+Unload+Load RaycastDown consistency", bPass, det.str());
+    }
+
+    // --- TC-08 Dynamic QueryAt returns Trigger -------------------------------
+    if (dynamicWorld != nullptr && dynamicWorld->IsLoaded())
+    {
+        // Activa todas as regioes do asset dinamico (smoke).
+        for (const auto& [regionId, _] : dynamicWorld->GetAsset().VolumeIndexByRegion)
+        {
+            dynamicWorld->LoadRegion(regionId);
+        }
+        const auto results = dynamicWorld->QueryAt(Math::Vector3(0.0, 0.0, 100.0));
+        bool foundTrigger = false;
+        for (const DynamicVolume* v : results)
+        {
+            if (v != nullptr && v->Kind == EDynamicVolumeKind::Trigger)
+            {
+                foundTrigger = true;
+                break;
+            }
+        }
+        std::ostringstream det;
+        det << "(volumes=" << results.size() << ")";
+        RecordResult(Report, "TC-08 Dynamic QueryAt finds Trigger", foundTrigger, det.str());
+    }
+    else
+    {
+        RecordResult(Report, "TC-08 Dynamic QueryAt finds Trigger", false,
+            "(no dynamic asset)");
+    }
+
+    // --- TC-09 Terrain RaycastDown over HeightField returns up normal --------
+    if (world.HasTerrain())
+    {
+        // Asset.Pieces[0] e o nosso HeightField plano centrado em (-3000, -3000, -50).
+        // Origem ~ (0, 0, 1000) deve cair no centro do HeightField.
+        const Math::Vector3 origin(0.0, 0.0, 1000.0);
+        RaycastHit hit;
+        const bool bHit = world.GetPhysicsWorld().RaycastDown(origin, 5000.0, hit);
+        const bool bUp = bHit && Math::IsWalkableFloor(hit.ImpactNormal,
+            Math::DefaultMaxSlopeAngleDeg);
+        std::ostringstream det;
+        det << "(hit=" << bHit << " normal=" << hit.ImpactNormal.ToString() << ")";
+        RecordResult(Report, "TC-09 Terrain RaycastDown returns up normal",
+            bHit && bUp, det.str());
+    }
+    else
+    {
+        RecordResult(Report, "TC-09 Terrain RaycastDown returns up normal", false,
+            "(no terrain asset)");
+    }
+
+    std::ostringstream summary;
+    summary << "[CollisionTest] Streaming summary passed=" << Report.PassedCount
             << " failed=" << Report.FailedCount;
     if (Report.FailedCount == 0)
     {

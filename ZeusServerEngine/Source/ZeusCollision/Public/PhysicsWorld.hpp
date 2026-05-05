@@ -9,6 +9,11 @@
 
 namespace Zeus::Collision
 {
+struct TerrainPiece;
+}
+
+namespace Zeus::Collision
+{
 /** Resultado de um raycast em coordenadas Zeus (cm). */
 struct RaycastHit
 {
@@ -24,6 +29,21 @@ struct ContactInfo
 {
     Math::Vector3 ContactPoint = Math::Vector3::Zero;
     Math::Vector3 ContactNormal = Math::Vector3::Zero;
+    std::uint32_t BodyId = 0;
+};
+
+/**
+ * Resultado de um shape cast (sweep). `Distance` é a distância em cm percorrida
+ * antes do primeiro contacto; `Normal` é a normal de contacto (do mundo para a
+ * cápsula). `Fraction` permite reusar o vector de sweep original.
+ */
+struct SweepHit
+{
+    bool bHit = false;
+    double Fraction = 0.0;
+    double Distance = 0.0;
+    Math::Vector3 ImpactPoint = Math::Vector3::Zero;
+    Math::Vector3 ImpactNormal = Math::Vector3::Zero;
     std::uint32_t BodyId = 0;
 };
 
@@ -55,8 +75,28 @@ public:
     /** Cria um body estático com o shape dado, no transform mundial Zeus (cm). */
     std::uint32_t AddStaticBody(const CollisionShape& shape, const Math::Transform& worldTransform);
 
+    /**
+     * Cria um body estatico para uma piece de terreno (TriangleMesh ou
+     * HeightField). Envolve internamente o `JoltShapeFactory::CreateMeshShape`/
+     * `CreateHeightFieldShape`.
+     */
+    std::uint32_t AddStaticBodyForTerrain(const TerrainPiece& piece);
+
+    /**
+     * Remove e destroi um body criado anteriormente por `AddStaticBody`.
+     * Devolve `false` se o id nao existe ou se o sistema nao esta inicializado.
+     */
+    bool RemoveStaticBody(std::uint32_t bodyId);
+
     /** Faz Optimize do BroadPhase após adicionar todos os bodies estáticos. */
     void OptimizeBroadPhase();
+
+    /**
+     * Versao com debounce: so executa o `OptimizeBroadPhase` se o numero de
+     * `Add/RemoveStaticBody` desde o ultimo optimize ultrapassar o threshold
+     * interno. Usada pelo `ZeusRegionSystem` para evitar custo por tick.
+     */
+    void OptimizeBroadPhaseIfNeeded();
 
     /** Roda 1 step (deltaSeconds) — útil só para smoke tests. */
     void Step(double deltaSeconds);
@@ -78,6 +118,15 @@ public:
      */
     bool CollideCapsule(const Math::Vector3& centerCm, double radiusCm, double halfHeightCm,
         ContactInfo& outFirstContact) const;
+
+    /**
+     * Sweep (shape cast) de uma capsula em pe (eixo Z) ao longo de `sweepCm`.
+     * Coordenadas em centimetros; `centerStartCm` e o centro da capsula no
+     * inicio do sweep. O caller pode usar o `Fraction` para mover a capsula ate
+     * just-before-impact (`pos + sweepCm * fraction * 0.999`).
+     */
+    bool SweepCapsule(const Math::Vector3& centerStartCm, double radiusCm, double halfHeightCm,
+        const Math::Vector3& sweepCm, SweepHit& outHit) const;
 
     /** Número de bodies registados (estáticos). */
     std::size_t GetBodyCount() const;

@@ -22,32 +22,29 @@ No mono-repo **ZeusProject**, este código vive em **`Server/ZeusServerEngine/`*
 2. Selecionar configuração **Debug** ou **Release** e plataforma **x64**
 3. **Build > Build Solution**
 
-Saída: `bin/Debug/` ou `bin/Release/` — executável `ZeusServer.exe`, pastas `Config/` e `Logs/` (criadas no pós-build), cópia do `server.json`.
+Saída: `bin/Debug/` ou `bin/Release/` — executável `ZeusServer.exe`. O pós-build copia `Config/*` para junto do `.exe`; **`Data/` continua na raiz do motor** (`ZeusServerEngine/Data`). O arranque resolve a raiz de conteúdo subindo a partir do executável até encontrar `Config/server.json` e **prioriza** a pasta que também tem `Data/` (tipicamente `Server/ZeusServerEngine/`).
 
-### Linux (CMake)
-
-Na pasta do servidor:
+### Windows / Linux (CMake)
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake -S . -B build
+cmake --build build --config Debug    # ou Release (multi-config MSVC)
 ```
 
-Executável: `build/ZeusServer`. Copiar ou apontar para `Config/server.json` (ex.: `cp -r Config build/` e correr a partir de `build/`).
+Executável: `build/Debug/ZeusServer.exe` ou `build/Release/ZeusServer.exe` (MSVC), ou `build/ZeusServer` (single-config). **Não é obrigatório** copiar `Config`/`Data` para `build/` — os caminhos relativos no JSON (`Data/Maps/...`, `Logs`) resolvem-se contra a raiz detectada (pai do `Config` que contém `Data`).
 
 ## Executar
 
-A partir da pasta de saída (para `Config/server.json` relativo funcionar):
+Podes correr o `.exe` a partir de `build/Debug` ou `bin/Debug`; o servidor descobre a raiz automaticamente. Opcional: define **`ZEUS_SERVER_ROOT`** com o caminho absoluto da pasta do motor (onde estão `Config` e `Data`).
 
 ```bat
-cd bin\Debug
-ZeusServer.exe
+build\Debug\ZeusServer.exe
 ```
 
-Ou passar o caminho do JSON:
+Ou passar o caminho absoluto do JSON (a raiz de `Data`/`Logs` relativa passa a ser o pai de `Config`):
 
 ```bat
-ZeusServer.exe C:\caminho\para\server.json
+ZeusServer.exe C:\caminho\completo\para\Config\server.json
 ```
 
 Parar: **Ctrl+C** (ou fechar a consola). No Linux, **SIGINT** e **SIGTERM** pedem paragem ao loop de forma compatível com handlers POSIX.

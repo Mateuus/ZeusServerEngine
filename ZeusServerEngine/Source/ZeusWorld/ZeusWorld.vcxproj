@@ -56,7 +56,7 @@
       <PreprocessorDefinitions>_DEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusCollision\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -68,7 +68,7 @@
       <PreprocessorDefinitions>NDEBUG;_LIB;WINVER=0x0A00;_WIN32_WINNT=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Public;$(SolutionDir)Source\ZeusCore\Public;$(SolutionDir)Source\ZeusMath\Public;$(SolutionDir)Source\ZeusRuntime\Public;$(SolutionDir)Source\ZeusPlatform\Public;$(SolutionDir)Source\ZeusCollision\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -81,31 +81,40 @@
     <ProjectReference Include="..\ZeusRuntime\ZeusRuntime.vcxproj">
       <Project>{c8731d2e-657e-4d8f-b023-4fe05d99b567}</Project>
     </ProjectReference>
+    <ProjectReference Include="..\ZeusCollision\ZeusCollision.vcxproj">
+      <Project>{B0C1D2E3-F4A5-46B7-8C9D-0E1F2A3B4C5D}</Project>
+    </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Private\Actor.cpp" />
     <ClCompile Include="Private\ActorComponent.cpp" />
+    <ClCompile Include="Private\DebugPlayerActor.cpp" />
     <ClCompile Include="Private\EntityManager.cpp" />
     <ClCompile Include="Private\Level.cpp" />
     <ClCompile Include="Private\MapInstance.cpp" />
+    <ClCompile Include="Private\RegionSystemTests.cpp" />
     <ClCompile Include="Private\World.cpp" />
     <ClCompile Include="Private\WorldRuntime.cpp" />
     <ClCompile Include="Private\WorldStats.cpp" />
+    <ClCompile Include="Private\ZeusRegionSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Public\Actor.hpp" />
     <ClInclude Include="Public\ActorComponent.hpp" />
     <ClInclude Include="Public\ActorLifecycle.hpp" />
     <ClInclude Include="Public\ActorTick.hpp" />
+    <ClInclude Include="Public\DebugPlayerActor.hpp" />
     <ClInclude Include="Public\EntityHandle.hpp" />
     <ClInclude Include="Public\EntityId.hpp" />
     <ClInclude Include="Public\EntityManager.hpp" />
     <ClInclude Include="Public\Level.hpp" />
     <ClInclude Include="Public\MapInstance.hpp" />
+    <ClInclude Include="Public\RegionSystemTests.hpp" />
     <ClInclude Include="Public\SpawnParameters.hpp" />
     <ClInclude Include="Public\World.hpp" />
     <ClInclude Include="Public\WorldRuntime.hpp" />
     <ClInclude Include="Public\WorldStats.hpp" />
+    <ClInclude Include="Public\ZeusRegionSystem.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

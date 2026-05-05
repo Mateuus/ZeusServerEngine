@@ -1,7 +1,15 @@
 #include "CoreServerApp.hpp"
+#include "ServerPaths.hpp"
 
 #include "CollisionTestScene.hpp"
 #include "CollisionWorld.hpp"
+#include "DebugPlayerActor.hpp"
+#include "DynamicCollisionWorld.hpp"
+#include "Entities/CharacterActor.hpp"
+#include "Movement/MovementComponent.hpp"
+#include "Movement/MovementSystem.hpp"
+#include "Movement/MovementTests.hpp"
+#include "RegionSystemTests.hpp"
 #include "EngineLoop.hpp"
 #include "MapInstance.hpp"
 #include "WorldRuntime.hpp"
@@ -17,7 +25,9 @@
 #include "SessionPacketHandler.hpp"
 #include "SpawnParameters.hpp"
 #include "UdpServer.hpp"
+#include "Vector3.hpp"
 #include "ZeusLog.hpp"
+#include "ZeusRegionSystem.hpp"
 
 #include <atomic>
 
@@ -36,6 +46,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cctype>
 #include <fstream>
@@ -43,6 +54,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include <filesystem>
 
@@ -285,6 +297,169 @@ bool ParseJsonFlatStringObject(const std::string& json, const char* keyName, std
     return true;
 }
 
+/**
+ * Le um valor numerico (int ou float) e devolve-o como `double`. Reaproveitavel
+ * para campos como `StreamingRadiusCm`/`SpeedCmS`.
+ */
+bool ParseJsonDoubleValue(const std::string& json, const char* key, double& outValue)
+{
+    const std::string quotedKey = std::string("\"") + key + "\"";
+    const size_t k = json.find(quotedKey);
+    if (k == std::string::npos)
+    {
+        return false;
+    }
+    size_t colon = json.find(':', k + quotedKey.size());
+    if (colon == std::string::npos)
+    {
+        return false;
+    }
+    ++colon;
+    while (colon < json.size() && std::isspace(static_cast<unsigned char>(json[colon])))
+    {
+        ++colon;
+    }
+    size_t end = colon;
+    if (colon < json.size() && (json[colon] == '-' || json[colon] == '+'))
+    {
+        ++end;
+    }
+    bool sawDigit = false;
+    bool sawDot = false;
+    while (end < json.size())
+    {
+        const char c = json[end];
+        if (std::isdigit(static_cast<unsigned char>(c)))
+        {
+            sawDigit = true;
+            ++end;
+        }
+        else if (c == '.' && !sawDot)
+        {
+            sawDot = true;
+            ++end;
+        }
+        else
+        {
+            break;
+        }
+    }
+    if (!sawDigit)
+    {
+        return false;
+    }
+    outValue = std::stod(json.substr(colon, end - colon));
+    return true;
+}
+
+/**
+ * Le um array de waypoints no formato `[[x,y,z], [x,y,z], ...]`. Aceita
+ * comentarios/espacos brancos. Sai em silencio com vector vazio se o key nao
+ * existir ou o formato for invalido.
+ */
+bool ParseJsonWaypointsArray(const std::string& json, const char* keyName,
+    std::vector<std::array<double, 3>>& out)
+{
+    out.clear();
+    const std::string quotedKey = std::string("\"") + keyName + "\"";
+    const size_t k = json.find(quotedKey);
+    if (k == std::string::npos)
+    {
+        return false;
+    }
+    const size_t colon = json.find(':', k + quotedKey.size());
+    if (colon == std::string::npos)
+    {
+        return false;
+    }
+    size_t open = json.find('[', colon);
+    if (open == std::string::npos)
+    {
+        return false;
+    }
+    size_t pos = open + 1;
+    auto skipWs = [&json](size_t& p) {
+        while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p])))
+        {
+            ++p;
+        }
+    };
+    while (pos < json.size())
+    {
+        skipWs(pos);
+        if (pos >= json.size())
+        {
+            return false;
+        }
+        if (json[pos] == ']')
+        {
+            return true;
+        }
+        if (json[pos] == ',')
+        {
+            ++pos;
+            continue;
+        }
+        if (json[pos] != '[')
+        {
+            return false;
+        }
+        ++pos; // entrei no inner array
+        std::array<double, 3> tuple{0.0, 0.0, 0.0};
+        for (int idx = 0; idx < 3; ++idx)
+        {
+            skipWs(pos);
+            const size_t numStart = pos;
+            if (pos < json.size() && (json[pos] == '-' || json[pos] == '+'))
+            {
+                ++pos;
+            }
+            bool sawDigit = false;
+            bool sawDot = false;
+            while (pos < json.size())
+            {
+                const char c = json[pos];
+                if (std::isdigit(static_cast<unsigned char>(c)))
+                {
+                    sawDigit = true;
+                    ++pos;
+                }
+                else if (c == '.' && !sawDot)
+                {
+                    sawDot = true;
+                    ++pos;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (!sawDigit)
+            {
+                return false;
+            }
+            tuple[idx] = std::stod(json.substr(numStart, pos - numStart));
+            skipWs(pos);
+            if (idx < 2)
+            {
+                if (pos >= json.size() || json[pos] != ',')
+                {
+                    return false;
+                }
+                ++pos;
+            }
+        }
+        skipWs(pos);
+        if (pos >= json.size() || json[pos] != ']')
+        {
+            return false;
+        }
+        ++pos; // sai do inner array
+        out.push_back(tuple);
+    }
+    return false;
+}
+
 LogLevel ParseLogLevelString(const std::string& s)
 {
     if (s == "Trace")
@@ -313,6 +488,13 @@ struct CoreServerApp::Impl
     std::unique_ptr<Zeus::Net::UdpServer> udp;
     std::unique_ptr<Zeus::World::WorldRuntime> worldRuntime;
     std::unique_ptr<Zeus::Collision::CollisionWorld> collisionWorld;
+    std::unique_ptr<Zeus::Collision::DynamicCollisionWorld> dynamicCollisionWorld;
+    std::unique_ptr<Zeus::World::ZeusRegionSystem> regionSystem;
+    std::unique_ptr<Zeus::Game::Movement::MovementSystem> movementSystem;
+    Zeus::World::DebugPlayerActor* debugPlayer = nullptr; // owned by World
+    Zeus::Game::Entities::CharacterActor* debugCharacter = nullptr; // owned by World
+    Zeus::World::MapInstance* mainMap = nullptr;          // owned by WorldRuntime
+    bool movementEnabled = false;
     Zeus::Net::NetConnectionManager netConnections;
     Zeus::Session::SessionManager sessions;
     Zeus::Session::SessionPacketHandler sessionPacketHandler;
@@ -322,6 +504,11 @@ struct CoreServerApp::Impl
     int targetTps = 30;
     bool initialized = false;
     bool shutDownDone = false;
+    bool regionStreamingEnabled = false;
+    int debugPanelTickEvery = 30; // emite SetSlot a cada N ticks
+    int debugPanelTickCounter = 0;
+    int debugOverlayRows = 0;
+    std::filesystem::path contentRoot;
 #if !defined(_WIN32)
     std::atomic<bool> posixInterrupt{false};
     bool posixSignalsRegistered = false;
@@ -340,14 +527,28 @@ CoreServerApp::~CoreServerApp()
     Shutdown();
 }
 
-ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
+ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath,
+    const std::filesystem::path& contentRootIn)
 {
+    std::error_code rootEc;
+    impl_->contentRoot = std::filesystem::weakly_canonical(contentRootIn, rootEc);
+    if (rootEc)
+    {
+        impl_->contentRoot = contentRootIn.lexically_normal();
+    }
+
     ZeusResult readErr = ZeusResult::Success();
     const std::string json = ReadEntireFile(configPath, readErr);
     if (!readErr.Ok())
     {
         return readErr;
     }
+
+    ZeusLog::Info("App",
+        std::string("ContentRoot=")
+            .append(impl_->contentRoot.string())
+            .append(" config=")
+            .append(configPath.string()));
 
     int tps = impl_->targetTps;
     if (!ParseJsonIntValue(json, "TargetTPS", tps))
@@ -368,7 +569,8 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
 
     std::string sessionLogDirStr = "Logs";
     (void)ParseJsonStringValue(json, "SessionLogDir", sessionLogDirStr);
-    const std::filesystem::path sessionLogDir(sessionLogDirStr);
+    const std::filesystem::path sessionLogDir =
+        ResolveUnderContentRoot(impl_->contentRoot, std::filesystem::path(sessionLogDirStr));
     const ZeusResult sessionLogResult = ZeusLog::OpenSessionLog(sessionLogDir);
     if (!sessionLogResult.Ok())
     {
@@ -554,6 +756,7 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
         }
         mainMap->BeginPlay();
     }
+    impl_->mainMap = mainMap;
 
     impl_->sessionPacketHandler.SetTravelInfo(defaultMap, clientMapPath);
     ZeusLog::Info("World",
@@ -576,7 +779,11 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
     bool enableCollisionWorld = false;
     bool runCollisionSmokeTest = false;
     std::string collisionFile;
+    std::string dynamicCollisionFile;
+    std::string terrainCollisionFile;
     std::unordered_map<std::string, std::string> collisionFileByMap;
+    std::unordered_map<std::string, std::string> dynamicFileByMap;
+    std::unordered_map<std::string, std::string> terrainFileByMap;
     std::string collisionFileLegacy;
     {
         const std::string collisionSection = "\"Collision\"";
@@ -588,21 +795,60 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
             (void)ParseJsonBoolValue(scoped, "RunCollisionSmokeTest", runCollisionSmokeTest);
             (void)ParseJsonStringValue(scoped, "CollisionFile", collisionFileLegacy);
             (void)ParseJsonFlatStringObject(scoped, "CollisionFileByMap", collisionFileByMap);
+            (void)ParseJsonFlatStringObject(scoped, "DynamicCollisionFileByMap", dynamicFileByMap);
+            (void)ParseJsonFlatStringObject(scoped, "TerrainCollisionFileByMap", terrainFileByMap);
         }
     }
 
-    const auto itMapCollision = collisionFileByMap.find(defaultMap);
-    if (itMapCollision != collisionFileByMap.end())
+    auto resolveByMap = [&defaultMap](const std::unordered_map<std::string, std::string>& m,
+        const std::string& fallback) -> std::string {
+        const auto it = m.find(defaultMap);
+        if (it != m.end())
+        {
+            return it->second;
+        }
+        return fallback;
+    };
+
+    collisionFile = resolveByMap(collisionFileByMap,
+        !collisionFileLegacy.empty() ? collisionFileLegacy
+                                     : std::string("Data/Maps/").append(defaultMap).append("/static_collision.zsm"));
+    dynamicCollisionFile = resolveByMap(dynamicFileByMap,
+        std::string("Data/Maps/").append(defaultMap).append("/dynamic_collision.zsm"));
+    terrainCollisionFile = resolveByMap(terrainFileByMap,
+        std::string("Data/Maps/").append(defaultMap).append("/terrain_collision.zsm"));
+
+    // RegionStreaming + DebugPlayer config (pre-collision para decidir lazy/build all).
+    bool regionStreamingEnabled = false;
+    Zeus::World::RegionStreamingSettings regionSettings;
     {
-        collisionFile = itMapCollision->second;
+        const size_t rs = json.find("\"RegionStreaming\"");
+        if (rs != std::string::npos)
+        {
+            const std::string scoped = json.substr(rs);
+            (void)ParseJsonBoolValue(scoped, "Enabled", regionStreamingEnabled);
+            (void)ParseJsonDoubleValue(scoped, "StreamingRadiusCm", regionSettings.StreamingRadiusCm);
+            (void)ParseJsonDoubleValue(scoped, "UnloadHysteresisCm", regionSettings.UnloadHysteresisCm);
+            int v = regionSettings.MaxLoadsPerTick;
+            if (ParseJsonIntValue(scoped, "MaxLoadsPerTick", v)) regionSettings.MaxLoadsPerTick = v;
+            v = regionSettings.MaxUnloadsPerTick;
+            if (ParseJsonIntValue(scoped, "MaxUnloadsPerTick", v)) regionSettings.MaxUnloadsPerTick = v;
+        }
     }
-    else if (!collisionFileLegacy.empty())
+    impl_->regionStreamingEnabled = regionStreamingEnabled;
+
+    bool debugPlayerEnabled = false;
+    double debugPlayerSpeedCmS = 600.0;
+    std::vector<std::array<double, 3>> debugWaypoints;
     {
-        collisionFile = collisionFileLegacy;
-    }
-    else
-    {
-        collisionFile = std::string("Data/Maps/").append(defaultMap).append("/static_collision.zsm");
+        const size_t dp = json.find("\"DebugPlayer\"");
+        if (dp != std::string::npos)
+        {
+            const std::string scoped = json.substr(dp);
+            (void)ParseJsonBoolValue(scoped, "Enabled", debugPlayerEnabled);
+            (void)ParseJsonDoubleValue(scoped, "SpeedCmS", debugPlayerSpeedCmS);
+            (void)ParseJsonWaypointsArray(scoped, "Waypoints", debugWaypoints);
+        }
     }
 
     if (enableCollisionWorld)
@@ -610,20 +856,48 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
         ZeusLog::Info("Collision",
             std::string("Collision path resolved map=").append(defaultMap).append(" zsm=").append(collisionFile));
         impl_->collisionWorld = std::make_unique<Zeus::Collision::CollisionWorld>();
-        const std::filesystem::path collisionPath = collisionFile;
+
+        const std::filesystem::path staticPath =
+            ResolveUnderContentRoot(impl_->contentRoot, std::filesystem::path(collisionFile));
         std::error_code fsErr;
-        const bool fileExists = std::filesystem::exists(collisionPath, fsErr);
         bool assetReady = false;
-        if (fileExists)
+        if (std::filesystem::exists(staticPath, fsErr))
         {
-            assetReady = impl_->collisionWorld->LoadFromZsm(collisionPath);
+            assetReady = impl_->collisionWorld->LoadFromZsm(staticPath);
         }
         else
         {
             ZeusLog::Info("Collision",
-                std::string("Collision disabled or file not found. Skipping (path=")
-                    .append(collisionPath.string())
-                    .append(")"));
+                std::string("Static .zsm not found: ").append(staticPath.string()));
+        }
+
+        const std::filesystem::path terrainPath =
+            ResolveUnderContentRoot(impl_->contentRoot, std::filesystem::path(terrainCollisionFile));
+        if (std::filesystem::exists(terrainPath, fsErr))
+        {
+            const bool ok = impl_->collisionWorld->LoadFromTerrainZsm(terrainPath);
+            if (ok)
+            {
+                assetReady = true;
+            }
+        }
+        else
+        {
+            ZeusLog::Info("Collision",
+                std::string("Terrain .zsm not found: ").append(terrainPath.string()));
+        }
+
+        const std::filesystem::path dynamicPath =
+            ResolveUnderContentRoot(impl_->contentRoot, std::filesystem::path(dynamicCollisionFile));
+        if (std::filesystem::exists(dynamicPath, fsErr))
+        {
+            impl_->dynamicCollisionWorld = std::make_unique<Zeus::Collision::DynamicCollisionWorld>();
+            (void)impl_->dynamicCollisionWorld->LoadFromZsm(dynamicPath);
+        }
+        else
+        {
+            ZeusLog::Info("Collision",
+                std::string("Dynamic .zsm not found: ").append(dynamicPath.string()));
         }
 
         if (runCollisionSmokeTest && !assetReady)
@@ -634,7 +908,15 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
 
         if (assetReady)
         {
-            (void)impl_->collisionWorld->BuildPhysicsWorld();
+            if (regionStreamingEnabled)
+            {
+                (void)impl_->collisionWorld->InitPhysicsLazy();
+                ZeusLog::Info("Collision", "[RegionStreaming] Enabled — using lazy region loading.");
+            }
+            else
+            {
+                (void)impl_->collisionWorld->BuildPhysicsWorld();
+            }
         }
 
         if (runCollisionSmokeTest && impl_->collisionWorld->IsPhysicsBuilt())
@@ -652,12 +934,154 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
             {
                 ZeusLog::Warning("CollisionTest", summary);
             }
+
+            // TC-06..TC-09 (streaming + dynamic + terrain)
+            if (!impl_->dynamicCollisionWorld)
+            {
+                impl_->dynamicCollisionWorld = std::make_unique<Zeus::Collision::DynamicCollisionWorld>();
+                impl_->dynamicCollisionWorld->LoadFromAsset(
+                    Zeus::Collision::CollisionTestScene::BuildProgrammaticDynamicAsset());
+            }
+            const auto streamReport = Zeus::Collision::CollisionTestScene::RunStreamingScenarios(
+                *impl_->collisionWorld, impl_->dynamicCollisionWorld.get());
+            (void)streamReport;
+
+            // RegionSystemTests usam um World/CollisionWorld separados (nao tocam no estado do servidor).
+            (void)Zeus::World::RegionSystemTests::RunAll();
+        }
+    }
+
+    // --- Movement (BL-003 / Parte 5) ---------------------------------------
+    bool movementEnabled = false;
+    bool movementRunSmokeTests = false;
+    bool movementSpawnDebugCharacter = false;
+    Zeus::Game::Movement::MovementParameters movementParams;
+    {
+        const size_t mv = json.find("\"Movement\"");
+        if (mv != std::string::npos)
+        {
+            const std::string scoped = json.substr(mv);
+            (void)ParseJsonBoolValue(scoped, "Enabled", movementEnabled);
+            (void)ParseJsonBoolValue(scoped, "RunSmokeTests", movementRunSmokeTests);
+            (void)ParseJsonBoolValue(scoped, "SpawnDebugCharacter", movementSpawnDebugCharacter);
+            (void)ParseJsonDoubleValue(scoped, "GravityZ", movementParams.GravityZ);
+            (void)ParseJsonDoubleValue(scoped, "MaxSlopeAngleDeg", movementParams.MaxSlopeAngleDeg);
+            (void)ParseJsonDoubleValue(scoped, "StepHeightCm", movementParams.StepHeightCm);
+            (void)ParseJsonDoubleValue(scoped, "DefaultSpeedCmS", movementParams.DefaultSpeedCmS);
+            (void)ParseJsonDoubleValue(scoped, "JumpVelocityCmS", movementParams.JumpVelocityCmS);
+            const size_t cap = scoped.find("\"Capsule\"");
+            if (cap != std::string::npos)
+            {
+                const std::string capScoped = scoped.substr(cap);
+                (void)ParseJsonDoubleValue(capScoped, "RadiusCm", movementParams.CapsuleRadiusCm);
+                (void)ParseJsonDoubleValue(capScoped, "HalfHeightCm", movementParams.CapsuleHalfHeightCm);
+            }
+        }
+    }
+    impl_->movementEnabled = movementEnabled;
+
+    if (movementEnabled)
+    {
+        impl_->movementSystem = std::make_unique<Zeus::Game::Movement::MovementSystem>();
+        impl_->movementSystem->Configure(movementParams);
+        if (impl_->collisionWorld)
+        {
+            impl_->movementSystem->SetCollisionWorld(impl_->collisionWorld.get());
+        }
+        ZeusLog::Info("Movement",
+            std::string("MovementSystem configured gravity=")
+                .append(std::to_string(movementParams.GravityZ))
+                .append(" maxSlope=")
+                .append(std::to_string(movementParams.MaxSlopeAngleDeg))
+                .append(" stepHeight=")
+                .append(std::to_string(movementParams.StepHeightCm))
+                .append(" speed=")
+                .append(std::to_string(movementParams.DefaultSpeedCmS)));
+
+        ZeusLog::Info("Movement",
+            std::string("RunSmokeTests=").append(movementRunSmokeTests ? "true" : "false"));
+        if (movementRunSmokeTests)
+        {
+            // MovementTests cria o seu proprio CollisionWorld interno (asset
+            // programatico). Passamos o do servidor apenas como referencia
+            // (signature exigida); o teste e' independente de Jolt global.
+            Zeus::Collision::CollisionWorld dummy;
+            Zeus::Collision::CollisionWorld& ref = impl_->collisionWorld
+                ? *impl_->collisionWorld : dummy;
+            (void)Zeus::Game::Movement::MovementTests::RunAll(ref);
+        }
+
+        if (movementSpawnDebugCharacter && mainMap != nullptr && impl_->collisionWorld)
+        {
+            Zeus::World::SpawnParameters params;
+            params.Name = "DebugCharacter";
+            params.Transform.Location = Zeus::Math::Vector3(0.0, 0.0, 200.0);
+            params.bAllowTick = true;
+            params.bStartActive = true;
+            auto* ch = mainMap->GetWorld().SpawnActorTyped<Zeus::Game::Entities::CharacterActor>(params, true);
+            if (ch != nullptr)
+            {
+                ch->SetCapsuleSize(movementParams.CapsuleRadiusCm, movementParams.CapsuleHalfHeightCm);
+                if (auto* mc = ch->GetMovementComponent())
+                {
+                    mc->SetCollisionWorld(impl_->collisionWorld.get());
+                    mc->SetParameters(movementParams);
+                    mc->MoveByAxis(1.0, 0.0); // andar em frente para validar runtime
+                }
+                impl_->debugCharacter = ch;
+                ZeusLog::Info("Movement", "Spawned DebugCharacter at (0,0,200) moving forward.");
+            }
         }
     }
     else
     {
         ZeusLog::Info("Collision", "EnableCollisionWorld=false; CollisionWorld not constructed.");
     }
+
+    if (regionStreamingEnabled && impl_->collisionWorld)
+    {
+        impl_->regionSystem = std::make_unique<Zeus::World::ZeusRegionSystem>();
+        regionSettings.RegionSizeCm = impl_->collisionWorld->GetAsset().RegionSizeCm > 0.0
+            ? impl_->collisionWorld->GetAsset().RegionSizeCm
+            : 5000.0;
+        impl_->regionSystem->Configure(regionSettings);
+        ZeusLog::Info("RegionSystem",
+            std::string("Configured RegionSizeCm=")
+                .append(std::to_string(regionSettings.RegionSizeCm))
+                .append(" StreamingRadiusCm=")
+                .append(std::to_string(regionSettings.StreamingRadiusCm)));
+    }
+
+    if (debugPlayerEnabled && mainMap != nullptr)
+    {
+        Zeus::World::SpawnParameters params;
+        params.Name = "DebugPlayer";
+        if (!debugWaypoints.empty())
+        {
+            const auto& w0 = debugWaypoints.front();
+            params.Transform.Location = Zeus::Math::Vector3(w0[0], w0[1], w0[2]);
+        }
+        params.bAllowTick = true;
+        params.bStartActive = true;
+        Zeus::World::DebugPlayerActor* dp = mainMap->GetWorld().SpawnActorTyped<Zeus::World::DebugPlayerActor>(params, true);
+        if (dp != nullptr)
+        {
+            std::vector<Zeus::Math::Vector3> wpts;
+            wpts.reserve(debugWaypoints.size());
+            for (const auto& t : debugWaypoints)
+            {
+                wpts.emplace_back(t[0], t[1], t[2]);
+            }
+            dp->SetWaypoints(std::move(wpts), debugPlayerSpeedCmS);
+            impl_->debugPlayer = dp;
+            ZeusLog::Info("DebugPlayer",
+                std::string("Spawned DebugPlayerActor waypoints=")
+                    .append(std::to_string(debugWaypoints.size()))
+                    .append(" speedCmS=")
+                    .append(std::to_string(debugPlayerSpeedCmS)));
+        }
+    }
+    impl_->debugOverlayRows = overlayRows;
 
     impl_->loop->SetFixedTickCallback([this](const double fixedDeltaSeconds) { RunFixedTick(fixedDeltaSeconds); });
 
@@ -695,11 +1119,21 @@ void CoreServerApp::Shutdown()
     {
         impl_->loop->SetFixedTickCallback({});
     }
+    impl_->movementSystem.reset();
+    impl_->debugCharacter = nullptr;
+    impl_->regionSystem.reset();
+    if (impl_->dynamicCollisionWorld)
+    {
+        impl_->dynamicCollisionWorld->Shutdown();
+        impl_->dynamicCollisionWorld.reset();
+    }
     if (impl_->collisionWorld)
     {
         impl_->collisionWorld->Shutdown();
         impl_->collisionWorld.reset();
     }
+    impl_->debugPlayer = nullptr;
+    impl_->mainMap = nullptr;
     if (impl_->worldRuntime)
     {
         impl_->worldRuntime->Shutdown();
@@ -788,6 +1222,100 @@ void CoreServerApp::RunFixedTick(const double fixedDeltaSeconds)
     if (impl_->worldRuntime)
     {
         impl_->worldRuntime->Tick(fixedDeltaSeconds);
+    }
+
+    // Streaming so corre depois do worldTick (DebugPlayer ja moveu).
+    if (impl_->regionSystem && impl_->collisionWorld && impl_->mainMap != nullptr)
+    {
+        impl_->regionSystem->Tick(impl_->mainMap->GetWorld(),
+            *impl_->collisionWorld,
+            impl_->dynamicCollisionWorld.get(),
+            fixedDeltaSeconds);
+    }
+
+    if (impl_->movementSystem && impl_->mainMap != nullptr)
+    {
+        impl_->movementSystem->RefreshStats(impl_->mainMap->GetWorld());
+    }
+
+    // ConsoleLivePanel slots de stats (cada N ticks).
+    if (impl_->debugOverlayRows > 1)
+    {
+        ++impl_->debugPanelTickCounter;
+        if (impl_->debugPanelTickCounter >= impl_->debugPanelTickEvery)
+        {
+            impl_->debugPanelTickCounter = 0;
+
+            std::ostringstream slot2;
+            if (impl_->regionSystem)
+            {
+                const auto& s = impl_->regionSystem->GetStats();
+                slot2 << "Region active=" << s.RegionsActive
+                      << " bodies=" << s.BodiesActive
+                      << " loads=" << s.TotalLoads
+                      << " unloads=" << s.TotalUnloads;
+            }
+            else if (impl_->collisionWorld)
+            {
+                slot2 << "Collision bodies=" << impl_->collisionWorld->GetStaticBodyCount();
+            }
+            else
+            {
+                slot2 << "Region streaming disabled";
+            }
+            Zeus::Platform::ConsoleLivePanel::SetSlot(1, slot2.str());
+
+            if (impl_->debugOverlayRows > 2)
+            {
+                std::ostringstream slot3;
+                if (impl_->debugPlayer != nullptr)
+                {
+                    const Zeus::Math::Vector3 p = impl_->debugPlayer->GetLocation();
+                    slot3 << "DebugPlayer pos=" << static_cast<long long>(p.X)
+                          << "," << static_cast<long long>(p.Y)
+                          << "," << static_cast<long long>(p.Z);
+                    if (impl_->regionSystem)
+                    {
+                        slot3 << " region=" << impl_->regionSystem->GetPrimaryPlayerRegionId();
+                    }
+                }
+                else
+                {
+                    slot3 << "No DebugPlayer";
+                }
+                Zeus::Platform::ConsoleLivePanel::SetSlot(2, slot3.str());
+            }
+
+            if (impl_->debugOverlayRows > 3)
+            {
+                std::ostringstream slot4;
+                if (impl_->debugCharacter != nullptr && impl_->debugCharacter->GetMovementComponent() != nullptr)
+                {
+                    const Zeus::Math::Vector3 p = impl_->debugCharacter->GetLocation();
+                    const auto& v = impl_->debugCharacter->GetMovementComponent()->GetVelocity();
+                    slot4 << "Move pos=(" << static_cast<long long>(p.X)
+                          << "," << static_cast<long long>(p.Y)
+                          << "," << static_cast<long long>(p.Z)
+                          << ") vel=(" << static_cast<long long>(v.X)
+                          << "," << static_cast<long long>(v.Y)
+                          << "," << static_cast<long long>(v.Z)
+                          << ") grounded=" << (impl_->debugCharacter->GetMovementComponent()->IsGrounded() ? 1 : 0);
+                }
+                else if (impl_->movementSystem)
+                {
+                    const auto& s = impl_->movementSystem->GetStats();
+                    slot4 << "Move chars=" << s.CharacterCount
+                          << " grounded=" << s.GroundedCount
+                          << " sweeps=" << s.SweepsLastTick
+                          << " avgVel=" << static_cast<long long>(s.AvgVelocityCmS);
+                }
+                else
+                {
+                    slot4 << "Movement disabled";
+                }
+                Zeus::Platform::ConsoleLivePanel::SetSlot(3, slot4.str());
+            }
+        }
     }
 }
 } // namespace Zeus::App
