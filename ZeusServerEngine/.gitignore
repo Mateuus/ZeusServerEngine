@@ -6,6 +6,9 @@ bin/
 *.VC.db*
 .vs/
 
+# Runtime logs (session logs written next to cwd or under Logs/)
+Logs/
+
 # CMake
 build/
 out/

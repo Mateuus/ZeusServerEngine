@@ -33,6 +33,8 @@ public:
     void RequestStop();
 
 private:
+    void RunFixedTick(double fixedDeltaSeconds);
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

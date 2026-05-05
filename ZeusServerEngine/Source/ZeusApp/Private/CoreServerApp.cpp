@@ -1,6 +1,8 @@
 #include "CoreServerApp.hpp"
 
 #include "EngineLoop.hpp"
+#include "MapInstance.hpp"
+#include "WorldRuntime.hpp"
 #include "NetworkDiagnostics.hpp"
 #include "NetworkSimulator.hpp"
 #include "NetConnectionManager.hpp"
@@ -11,6 +13,7 @@
 #include "SessionManager.hpp"
 #include "SessionNetworkSettings.hpp"
 #include "SessionPacketHandler.hpp"
+#include "SpawnParameters.hpp"
 #include "UdpServer.hpp"
 #include "ZeusLog.hpp"
 
@@ -212,6 +215,7 @@ struct CoreServerApp::Impl
 {
     std::unique_ptr<Zeus::Runtime::EngineLoop> loop = std::make_unique<Zeus::Runtime::EngineLoop>();
     std::unique_ptr<Zeus::Net::UdpServer> udp;
+    std::unique_ptr<Zeus::World::WorldRuntime> worldRuntime;
     Zeus::Net::NetConnectionManager netConnections;
     Zeus::Session::SessionManager sessions;
     Zeus::Session::SessionPacketHandler sessionPacketHandler;
@@ -411,40 +415,6 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
         {
             const std::string listenLine = std::string("UDP listening on 0.0.0.0:") + std::to_string(listenUdp) + " (clients can connect)";
             ZeusLog::Info("Net", std::string_view(listenLine));
-            impl_->loop->SetFixedTickCallback([this](const double fixedDeltaSeconds) {
-                (void)fixedDeltaSeconds;
-                if (!impl_->udp)
-                {
-                    return;
-                }
-                const double nowMono = Zeus::Platform::NowMonotonicSeconds();
-                const std::uint64_t wallMs = Zeus::Platform::NowUnixEpochMilliseconds();
-                impl_->udp->PumpReceive([this, nowMono, wallMs](const std::uint8_t* data, const std::size_t n, const Zeus::Net::UdpEndpoint& from) {
-                    if (impl_->netSim.ShouldDropInbound())
-                    {
-                        ++impl_->netStats.DatagramsSimDropped;
-                        return;
-                    }
-                    Zeus::Protocol::PacketParser::Output parsed{};
-                    const ZeusResult pr = Zeus::Protocol::PacketParser::Parse(data, n, false, parsed);
-                    if (!pr.Ok())
-                    {
-                        ++impl_->netStats.DatagramsRejectedParse;
-                        return;
-                    }
-                    impl_->sessionPacketHandler.OnDatagram(
-                        *impl_->udp,
-                        impl_->netConnections,
-                        impl_->sessions,
-                        nowMono,
-                        wallMs,
-                        parsed,
-                        from);
-                });
-                impl_->sessionPacketHandler.OnTickPostNetwork(
-                    *impl_->udp, impl_->netConnections, impl_->sessions, nowMono, wallMs);
-                impl_->sessionPacketHandler.OnTickTimeouts(impl_->netConnections, impl_->sessions, nowMono);
-            });
         }
     }
     else if (listenUdp != 0)
@@ -460,7 +430,35 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
             "UDP disabled (ListenUdpPort=0). Set ListenUdpPort to 1-65535 in Config/server.json to listen for clients.");
     }
 
-    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 foundation + Part 2 network modules).");
+    impl_->worldRuntime = std::make_unique<Zeus::World::WorldRuntime>();
+    (void)impl_->worldRuntime->Initialize();
+
+    std::string defaultMap = "TestWorld";
+    (void)ParseJsonStringValue(json, "WorldDefaultMap", defaultMap);
+
+    Zeus::World::MapInstance* mainMap = impl_->worldRuntime->CreateMapInstance(defaultMap);
+    if (mainMap != nullptr)
+    {
+        mainMap->BeginPlay();
+    }
+
+    bool worldDebugSpawnActors = false;
+    (void)ParseJsonBoolValue(json, "WorldDebugSpawnActors", worldDebugSpawnActors);
+    if (worldDebugSpawnActors && mainMap != nullptr)
+    {
+        Zeus::World::World& w = mainMap->GetWorld();
+        static constexpr const char* kDebugNames[] = {"DebugActor_01", "DebugActor_02", "DebugActor_03"};
+        for (const char* name : kDebugNames)
+        {
+            Zeus::World::SpawnParameters params;
+            params.Name = name;
+            w.SpawnActor(params);
+        }
+    }
+
+    impl_->loop->SetFixedTickCallback([this](const double fixedDeltaSeconds) { RunFixedTick(fixedDeltaSeconds); });
+
+    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 + Part 2 network + Part 3 world runtime).");
     const std::string tpsLine = "TargetTPS=" + std::to_string(impl_->targetTps);
     ZeusLog::Info("App", std::string_view(tpsLine));
     if (ZeusLog::IsSessionLogOpen())
@@ -493,6 +491,11 @@ void CoreServerApp::Shutdown()
     if (impl_->loop)
     {
         impl_->loop->SetFixedTickCallback({});
+    }
+    if (impl_->worldRuntime)
+    {
+        impl_->worldRuntime->Shutdown();
+        impl_->worldRuntime.reset();
     }
     if (impl_->udp)
     {
@@ -535,6 +538,48 @@ void CoreServerApp::RequestStop()
     if (impl_ && impl_->loop)
     {
         impl_->loop->RequestStop();
+    }
+}
+
+void CoreServerApp::RunFixedTick(const double fixedDeltaSeconds)
+{
+    (void)fixedDeltaSeconds;
+    const double nowMono = Zeus::Platform::NowMonotonicSeconds();
+    const std::uint64_t wallMs = Zeus::Platform::NowUnixEpochMilliseconds();
+
+    if (impl_->udp)
+    {
+        impl_->udp->PumpReceive([this, nowMono, wallMs](const std::uint8_t* data, const std::size_t n, const Zeus::Net::UdpEndpoint& from) {
+            if (impl_->netSim.ShouldDropInbound())
+            {
+                ++impl_->netStats.DatagramsSimDropped;
+                return;
+            }
+            Zeus::Protocol::PacketParser::Output parsed{};
+            const ZeusResult pr = Zeus::Protocol::PacketParser::Parse(data, n, false, parsed);
+            if (!pr.Ok())
+            {
+                ++impl_->netStats.DatagramsRejectedParse;
+                return;
+            }
+            impl_->sessionPacketHandler.OnDatagram(
+                *impl_->udp,
+                impl_->netConnections,
+                impl_->sessions,
+                nowMono,
+                wallMs,
+                parsed,
+                from);
+        });
+        impl_->sessionPacketHandler.OnTickPostNetwork(
+            *impl_->udp, impl_->netConnections, impl_->sessions, nowMono, wallMs);
+    }
+
+    impl_->sessionPacketHandler.OnTickTimeouts(impl_->netConnections, impl_->sessions, nowMono);
+
+    if (impl_->worldRuntime)
+    {
+        impl_->worldRuntime->Tick(fixedDeltaSeconds);
     }
 }
 } // namespace Zeus::App

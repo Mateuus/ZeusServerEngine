@@ -12,6 +12,8 @@ set(ZEUS_PLATFORM_PUBLIC ${ZEUS_ROOT}/Source/ZeusPlatform/Public)
 set(ZEUS_NET_PUBLIC ${ZEUS_ROOT}/Source/ZeusNet/Public)
 set(ZEUS_SESSION_PUBLIC ${ZEUS_ROOT}/Source/ZeusSession/Public)
 set(ZEUS_RUNTIME_PUBLIC ${ZEUS_ROOT}/Source/ZeusRuntime/Public)
+set(ZEUS_MATH_PUBLIC ${ZEUS_ROOT}/Source/ZeusMath/Public)
+set(ZEUS_WORLD_PUBLIC ${ZEUS_ROOT}/Source/ZeusWorld/Public)
 set(ZEUS_APP_PUBLIC ${ZEUS_ROOT}/Source/ZeusApp/Public)
 
 add_library(ZeusCore STATIC
@@ -95,6 +97,36 @@ target_include_directories(ZeusRuntime PUBLIC
 )
 target_link_libraries(ZeusRuntime PUBLIC ZeusPlatform)
 
+add_library(ZeusMath STATIC
+    Source/ZeusMath/Private/Bounds.cpp
+    Source/ZeusMath/Private/MathUtils.cpp
+    Source/ZeusMath/Private/Quaternion.cpp
+    Source/ZeusMath/Private/Rotator.cpp
+    Source/ZeusMath/Private/Transform.cpp
+    Source/ZeusMath/Private/Vector3.cpp
+)
+target_include_directories(ZeusMath PUBLIC ${ZEUS_MATH_PUBLIC} ${ZEUS_CORE_PUBLIC})
+target_link_libraries(ZeusMath PUBLIC ZeusCore)
+
+add_library(ZeusWorld STATIC
+    Source/ZeusWorld/Private/Actor.cpp
+    Source/ZeusWorld/Private/ActorComponent.cpp
+    Source/ZeusWorld/Private/EntityManager.cpp
+    Source/ZeusWorld/Private/Level.cpp
+    Source/ZeusWorld/Private/MapInstance.cpp
+    Source/ZeusWorld/Private/World.cpp
+    Source/ZeusWorld/Private/WorldRuntime.cpp
+    Source/ZeusWorld/Private/WorldStats.cpp
+)
+target_include_directories(ZeusWorld PUBLIC
+    ${ZEUS_WORLD_PUBLIC}
+    ${ZEUS_CORE_PUBLIC}
+    ${ZEUS_MATH_PUBLIC}
+    ${ZEUS_RUNTIME_PUBLIC}
+    ${ZEUS_PLATFORM_PUBLIC}
+)
+target_link_libraries(ZeusWorld PUBLIC ZeusCore ZeusMath ZeusRuntime)
+
 add_executable(ZeusServer
     Source/ZeusApp/Private/main.cpp
     Source/ZeusApp/Private/CoreServerApp.cpp
@@ -107,8 +139,10 @@ target_include_directories(ZeusServer PRIVATE
     ${ZEUS_NET_PUBLIC}
     ${ZEUS_SESSION_PUBLIC}
     ${ZEUS_RUNTIME_PUBLIC}
+    ${ZEUS_MATH_PUBLIC}
+    ${ZEUS_WORLD_PUBLIC}
 )
-target_link_libraries(ZeusServer PRIVATE ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
+target_link_libraries(ZeusServer PRIVATE ZeusWorld ZeusMath ZeusRuntime ZeusSession ZeusNet ZeusProtocol)
 
 if(UNIX AND NOT APPLE)
     target_compile_definitions(ZeusPlatform PRIVATE _GNU_SOURCE)
