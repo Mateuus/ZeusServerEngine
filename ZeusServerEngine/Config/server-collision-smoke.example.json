@@ -5,7 +5,7 @@
   "DebugOverlayRows": 0,
   "WorldDefaultMap": "TestWorld",
   "WorldDebugSpawnActors": false,
-  "ListenUdpPort": 27777,
+  "ListenUdpPort": 0,
   "NetSimDropPermille": 0,
   "ConnectionTimeoutMs": 30000,
   "NetworkDebugAck": false,
@@ -17,8 +17,8 @@
   "MaxOrderedPendingPerChannel": 64,
   "MaxOrderedGap": 128,
   "Collision": {
-    "EnableCollisionWorld": false,
-    "RunCollisionSmokeTest": false,
+    "EnableCollisionWorld": true,
+    "RunCollisionSmokeTest": true,
     "CollisionFileByMap": {
       "TestWorld": "Data/Maps/TestWorld/static_collision.zsm"
     }

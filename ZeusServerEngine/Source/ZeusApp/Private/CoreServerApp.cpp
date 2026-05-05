@@ -1,5 +1,7 @@
 #include "CoreServerApp.hpp"
 
+#include "CollisionTestScene.hpp"
+#include "CollisionWorld.hpp"
 #include "EngineLoop.hpp"
 #include "MapInstance.hpp"
 #include "WorldRuntime.hpp"
@@ -40,6 +42,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include <filesystem>
 
@@ -189,6 +192,99 @@ bool ParseJsonStringValue(const std::string& json, const char* key, std::string&
     return true;
 }
 
+/**
+ * Lê um objecto JSON plano `"keyName": { "k1": "v1", "k2": "v2" }` sem nesting.
+ * Usado para `Collision.CollisionFileByMap` (nome lógico do mapa → caminho .zsm).
+ */
+bool ParseJsonFlatStringObject(const std::string& json, const char* keyName, std::unordered_map<std::string, std::string>& out)
+{
+    out.clear();
+    const std::string quotedKey = std::string("\"") + keyName + "\"";
+    const size_t k = json.find(quotedKey);
+    if (k == std::string::npos)
+    {
+        return false;
+    }
+    const size_t colon = json.find(':', k + quotedKey.size());
+    if (colon == std::string::npos)
+    {
+        return false;
+    }
+    size_t brace = json.find('{', colon);
+    if (brace == std::string::npos)
+    {
+        return false;
+    }
+    size_t pos = brace + 1;
+    while (pos < json.size())
+    {
+        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])))
+        {
+            ++pos;
+        }
+        if (pos >= json.size())
+        {
+            break;
+        }
+        if (json[pos] == '}')
+        {
+            ++pos;
+            break;
+        }
+        if (json[pos] == ',')
+        {
+            ++pos;
+            continue;
+        }
+        if (json[pos] != '"')
+        {
+            return false;
+        }
+        const size_t keyStart = pos + 1;
+        const size_t keyEnd = json.find('"', keyStart);
+        if (keyEnd == std::string::npos)
+        {
+            return false;
+        }
+        const std::string entryKey = json.substr(keyStart, keyEnd - keyStart);
+        pos = keyEnd + 1;
+        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])))
+        {
+            ++pos;
+        }
+        if (pos >= json.size() || json[pos] != ':')
+        {
+            return false;
+        }
+        ++pos;
+        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])))
+        {
+            ++pos;
+        }
+        if (pos >= json.size() || json[pos] != '"')
+        {
+            return false;
+        }
+        const size_t valStart = pos + 1;
+        const size_t valEnd = json.find('"', valStart);
+        if (valEnd == std::string::npos)
+        {
+            return false;
+        }
+        out[entryKey] = json.substr(valStart, valEnd - valStart);
+        pos = valEnd + 1;
+        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos])))
+        {
+            ++pos;
+        }
+        if (pos < json.size() && json[pos] == ',')
+        {
+            ++pos;
+        }
+    }
+    return true;
+}
+
 LogLevel ParseLogLevelString(const std::string& s)
 {
     if (s == "Trace")
@@ -216,6 +312,7 @@ struct CoreServerApp::Impl
     std::unique_ptr<Zeus::Runtime::EngineLoop> loop = std::make_unique<Zeus::Runtime::EngineLoop>();
     std::unique_ptr<Zeus::Net::UdpServer> udp;
     std::unique_ptr<Zeus::World::WorldRuntime> worldRuntime;
+    std::unique_ptr<Zeus::Collision::CollisionWorld> collisionWorld;
     Zeus::Net::NetConnectionManager netConnections;
     Zeus::Session::SessionManager sessions;
     Zeus::Session::SessionPacketHandler sessionPacketHandler;
@@ -456,9 +553,95 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
         }
     }
 
+    bool enableCollisionWorld = false;
+    bool runCollisionSmokeTest = false;
+    std::string collisionFile;
+    std::unordered_map<std::string, std::string> collisionFileByMap;
+    std::string collisionFileLegacy;
+    {
+        const std::string collisionSection = "\"Collision\"";
+        const size_t cs = json.find(collisionSection);
+        if (cs != std::string::npos)
+        {
+            const std::string scoped = json.substr(cs);
+            (void)ParseJsonBoolValue(scoped, "EnableCollisionWorld", enableCollisionWorld);
+            (void)ParseJsonBoolValue(scoped, "RunCollisionSmokeTest", runCollisionSmokeTest);
+            (void)ParseJsonStringValue(scoped, "CollisionFile", collisionFileLegacy);
+            (void)ParseJsonFlatStringObject(scoped, "CollisionFileByMap", collisionFileByMap);
+        }
+    }
+
+    const auto itMapCollision = collisionFileByMap.find(defaultMap);
+    if (itMapCollision != collisionFileByMap.end())
+    {
+        collisionFile = itMapCollision->second;
+    }
+    else if (!collisionFileLegacy.empty())
+    {
+        collisionFile = collisionFileLegacy;
+    }
+    else
+    {
+        collisionFile = std::string("Data/Maps/").append(defaultMap).append("/static_collision.zsm");
+    }
+
+    if (enableCollisionWorld)
+    {
+        ZeusLog::Info("Collision",
+            std::string("Collision path resolved map=").append(defaultMap).append(" zsm=").append(collisionFile));
+        impl_->collisionWorld = std::make_unique<Zeus::Collision::CollisionWorld>();
+        const std::filesystem::path collisionPath = collisionFile;
+        std::error_code fsErr;
+        const bool fileExists = std::filesystem::exists(collisionPath, fsErr);
+        bool assetReady = false;
+        if (fileExists)
+        {
+            assetReady = impl_->collisionWorld->LoadFromZsm(collisionPath);
+        }
+        else
+        {
+            ZeusLog::Info("Collision",
+                std::string("Collision disabled or file not found. Skipping (path=")
+                    .append(collisionPath.string())
+                    .append(")"));
+        }
+
+        if (runCollisionSmokeTest && !assetReady)
+        {
+            assetReady = impl_->collisionWorld->LoadFromAsset(
+                Zeus::Collision::CollisionTestScene::BuildProgrammaticAsset());
+        }
+
+        if (assetReady)
+        {
+            (void)impl_->collisionWorld->BuildPhysicsWorld();
+        }
+
+        if (runCollisionSmokeTest && impl_->collisionWorld->IsPhysicsBuilt())
+        {
+            const auto report = Zeus::Collision::CollisionTestScene::RunAll(*impl_->collisionWorld);
+            const std::string summary = std::string("[CollisionTest] passed=")
+                .append(std::to_string(report.PassedCount))
+                .append(" failed=")
+                .append(std::to_string(report.FailedCount));
+            if (report.FailedCount == 0)
+            {
+                ZeusLog::Info("CollisionTest", summary);
+            }
+            else
+            {
+                ZeusLog::Warning("CollisionTest", summary);
+            }
+        }
+    }
+    else
+    {
+        ZeusLog::Info("Collision", "EnableCollisionWorld=false; CollisionWorld not constructed.");
+    }
+
     impl_->loop->SetFixedTickCallback([this](const double fixedDeltaSeconds) { RunFixedTick(fixedDeltaSeconds); });
 
-    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 + Part 2 network + Part 3 world runtime).");
+    ZeusLog::Info("App", "CoreServerApp initialized (Part 1 + Part 2 network + Part 3 world runtime + Part 4 collision).");
     const std::string tpsLine = "TargetTPS=" + std::to_string(impl_->targetTps);
     ZeusLog::Info("App", std::string_view(tpsLine));
     if (ZeusLog::IsSessionLogOpen())
@@ -491,6 +674,11 @@ void CoreServerApp::Shutdown()
     if (impl_->loop)
     {
         impl_->loop->SetFixedTickCallback({});
+    }
+    if (impl_->collisionWorld)
+    {
+        impl_->collisionWorld->Shutdown();
+        impl_->collisionWorld.reset();
     }
     if (impl_->worldRuntime)
     {

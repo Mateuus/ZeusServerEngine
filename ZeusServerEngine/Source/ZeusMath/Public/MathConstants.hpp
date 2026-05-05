@@ -13,4 +13,16 @@ inline constexpr double RadToDeg = 180.0 / Pi;
  * Não aplicada pelo motor nesta fase; apenas constante de referência.
  */
 inline constexpr double DefaultGravityZ = -980.0;
+
+/** Ângulo máximo (em graus) considerado caminhável pelo CharacterController. */
+inline constexpr double DefaultMaxSlopeAngleDeg = 45.0;
+
+/** Altura máxima de degrau em centímetros (referência). */
+inline constexpr double DefaultStepHeightCm = 45.0;
+
+/** Raio padrão da capsule do player em centímetros (referência). */
+inline constexpr double DefaultCapsuleRadiusCm = 35.0;
+
+/** Altura padrão da capsule do player em centímetros (referência). */
+inline constexpr double DefaultCapsuleHeightCm = 180.0;
 } // namespace Zeus::Math

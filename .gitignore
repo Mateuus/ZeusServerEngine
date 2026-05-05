@@ -4,3 +4,11 @@ Thumbs.db
 # Unreal plugin ZeusNetwork (artefactos locais de build)
 Plugins/Unreal/ZeusNetwork/Intermediate/
 Plugins/Unreal/ZeusNetwork/Binaries/
+
+# Unreal plugin ZeusMapTools (artefactos locais de build)
+Plugins/Unreal/ZeusMapTools/Intermediate/
+Plugins/Unreal/ZeusMapTools/Binaries/
+
+# CMake out-of-source build folders (Jolt FetchContent + bin)
+ZeusServerEngine/build-collision/
+ZeusServerEngine/build/
