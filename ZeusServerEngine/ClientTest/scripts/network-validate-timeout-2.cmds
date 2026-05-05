@@ -1,0 +1,4 @@
+# TEST-010 parte B: novo handshake e ping OK
+connect
+ping
+disconnect

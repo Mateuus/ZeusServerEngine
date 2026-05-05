@@ -41,10 +41,16 @@ export const enum EOpcode {
   S_DISCONNECT_OK = 1021,
   C_LOADING_FRAGMENT = 1030,
   S_LOADING_ASSEMBLED_OK = 1031,
+
+  C_TEST_RELIABLE = 1100,
+  S_TEST_RELIABLE = 1101,
+  C_TEST_ORDERED = 1110,
+  S_TEST_ORDERED = 1111,
 }
 
 export const enum ConnectRejectReason {
   InvalidProtocolVersion = 1,
   ServerFull = 2,
   InvalidPacket = 3,
+  InvalidHandshake = 4,
 }

@@ -72,6 +72,12 @@ export class ZeusPacketWriter {
     this.cursor += b.length;
   }
 
+  writeBytes(data: Buffer): void {
+    this.ensure(data.length);
+    data.copy(this.buf, this.cursor);
+    this.cursor += data.length;
+  }
+
   slice(): Buffer {
     return this.buf.subarray(0, this.cursor);
   }

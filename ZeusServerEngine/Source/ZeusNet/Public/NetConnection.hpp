@@ -10,9 +10,28 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
+#include <vector>
 
 namespace Zeus::Net
 {
+/** Resultado de aceitar `ReliableOrdered` com reordenação limitada por canal. */
+enum class OrderedInboundResult : std::uint8_t
+{
+    Delivered,
+    QueuedFuture,
+    DuplicateOld,
+    QueueFull
+};
+
+/** Mensagem `ReliableOrdered` pronta a despachar (payload após cabeçalho). */
+struct FOrderedInboundReleased
+{
+    std::uint16_t Opcode = 0;
+    std::uint32_t RemoteSequence = 0;
+    std::vector<std::uint8_t> Payload;
+};
+
 /** Conexão UDP lógica (sem gameplay). */
 class NetConnection
 {
@@ -51,7 +70,11 @@ public:
         double nowMonotonicSeconds,
         PacketStats* stats);
 
-    void TickReliabilityResends(UdpServer& udp, std::uint64_t wallTimeMs, PacketStats* stats);
+    void TickReliabilityResends(UdpServer& udp, std::uint64_t wallTimeMs, PacketStats* stats, std::uint32_t* giveUpsOut);
+
+    void SetReliabilityPolicy(const double resendIntervalSeconds, const std::uint32_t maxResends);
+
+    void SetOrderedInboundLimits(const std::uint32_t maxPendingPerChannel, const std::uint32_t maxGap);
 
     /** Envio imediato (ex. rejeição) — regista cópia para ACK/reenvio se `Reliable`. */
     void RegisterReliableOutboundEcho(
@@ -63,9 +86,14 @@ public:
     [[nodiscard]] std::uint16_t NextReliableOrderId(const Zeus::Protocol::ENetChannel channel);
 
     /** `ReliableOrdered` recebido do cliente: `orderId` vem de `PacketHeader::flags`. */
-    [[nodiscard]] bool TryAcceptInboundReliableOrdered(
+    [[nodiscard]] OrderedInboundResult SubmitInboundReliableOrdered(
         const Zeus::Protocol::ENetChannel channel,
-        const std::uint16_t orderId);
+        const std::uint16_t orderId,
+        const std::uint16_t opcode,
+        const std::uint32_t remoteSequence,
+        const std::uint8_t* payload,
+        const std::size_t payloadSize,
+        std::vector<FOrderedInboundReleased>& outReleased);
 
     void ResetInboundReliableOrder(const Zeus::Protocol::ENetChannel channel);
 
@@ -89,5 +117,16 @@ private:
     ReliabilityLayer reliability_{};
     std::array<std::uint16_t, 5> nextOutboundReliableOrder_{};
     std::array<std::uint16_t, 5> nextInboundReliableOrderExpected_{};
+
+    struct FOrderedInboundStored
+    {
+        std::uint16_t Opcode = 0;
+        std::uint32_t RemoteSequence = 0;
+        std::vector<std::uint8_t> Payload;
+    };
+
+    std::array<std::map<std::uint16_t, FOrderedInboundStored>, 5> orderedInboundPending_{};
+    std::uint32_t maxOrderedPendingPerChannel_ = 64;
+    std::uint32_t maxOrderedGap_ = 128;
 };
 } // namespace Zeus::Net

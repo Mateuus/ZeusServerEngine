@@ -51,7 +51,8 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 
 ### `flags` no cabeçalho
 
-- Em mensagens **`ReliableOrdered`** (e `UnreliableSequenced` no servidor), o campo `flags` transporta um **order id por canal** (`NetConnection::NextReliableOrderId` / `TryAcceptInboundReliableOrdered`).
+- Em mensagens **`ReliableOrdered`** (e `UnreliableSequenced` no servidor), o campo `flags` transporta um **order id por canal** (`NetConnection::NextReliableOrderId` / `SubmitInboundReliableOrdered`).
+- **`ReliableOrdered` com reordenação UDP**: `NetConnection::SubmitInboundReliableOrdered` mantém um **mapa pendente por canal** (limite `MaxOrderedPendingPerChannel`, salto máximo `MaxOrderedGap`). Mensagens com `orderId` futuro são enfileiradas até chegar o `orderId` esperado; `orderId` antigo é tratado como duplicata. Canais usam contadores independentes (Gameplay não bloqueia Loading, etc.).
 
 ### Fila, ACK e reenvio
 
@@ -63,9 +64,10 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 1. Cliente envia `C_CONNECT_REQUEST` com `connectionId = 0` no cabeçalho.
 2. Servidor cria `NetConnection` e `ClientSession` em estado **`Connecting`**, envia `S_CONNECT_CHALLENGE` (`serverNonce`, `connectionId` no payload).
 3. Cliente responde `C_CONNECT_RESPONSE` (`clientNonce` do pedido + `serverNonce` do challenge), `ReliableOrdered` no canal `Loading`, `connectionId` no cabeçalho igual ao recebido no challenge.
-4. Servidor valida nonces e ordenação, passa a sessão a **`Connected`**, envia `S_CONNECT_OK`.
-5. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (útil com perda UDP).
-6. Sessões em estado **`Connecting`** no mesmo endpoint: novo `C_CONNECT_REQUEST` válido **reenvia o mesmo challenge** (mesmo `serverNonce`), atualizando o `clientNonce` do pedido.
+4. Servidor valida nonces e ordenação `ReliableOrdered` no canal `Loading`, passa a sessão a **`Connected`**, envia `S_CONNECT_OK`.
+5. **`C_CONNECT_RESPONSE` inválido** (payload ilegível ou nonces incoerentes com a sessão em `Connecting`): o servidor envia `S_CONNECT_REJECT` (`InvalidPacket` ou `InvalidHandshake`) e remove sessão + conexão.
+6. **Idempotência**: se o mesmo `UdpEndpoint` já tiver sessão em `Connected`, um novo `C_CONNECT_REQUEST` válido recebe de novo o **mesmo** `S_CONNECT_OK` (útil com perda UDP).
+7. Sessões em estado **`Connecting`** no mesmo endpoint: novo `C_CONNECT_REQUEST` válido **reenvia o mesmo challenge** (mesmo `serverNonce`), atualizando o `clientNonce` do pedido.
 
 ### Payload `C_CONNECT_REQUEST`
 
@@ -75,7 +77,8 @@ O `PacketParser` valida magic, versão, `headerSize == 32`, tamanhos e limite de
 | `clientBuild` | `string` (UTF-8, prefixo `uint16` length) |
 | `clientNonce` | `uint64` |
 
-Validação: `clientProtocolVersion` deve ser `ZEUS_PROTOCOL_VERSION`; caso contrário `S_CONNECT_REJECT` com `reasonCode = 1` (InvalidProtocolVersion).
+Validação: `clientProtocolVersion` deve ser `ZEUS_PROTOCOL_VERSION`; caso contrário `S_CONNECT_REJECT` com `reasonCode = 1` (InvalidProtocolVersion).  
+`clientBuild` não pode ser vazio (após trim ASCII) nem exceder **256** bytes UTF-8; caso contrário `S_CONNECT_REJECT` (`InvalidPacket`).
 
 ### Payload `S_CONNECT_CHALLENGE`
 
@@ -126,13 +129,14 @@ Motivos iniciais (`ConnectRejectReason`):
 | 1 | InvalidProtocolVersion |
 | 2 | ServerFull |
 | 3 | InvalidPacket |
+| 4 | InvalidHandshake (`C_CONNECT_RESPONSE` com nonces inválidos) |
 
 ## Ping / Pong
 
 - Payload `C_PING`: `clientTimeMs` (`uint64`, epoch Unix ms recomendado pelo cliente).
 - Payload `S_PONG`: `clientTimeMs` (`uint64`) + `serverTimeMs` (`uint64`).
 
-**Regra:** `C_PING` só é aceite se existir `NetConnection` + `ClientSession` em `Connected`, `connectionId` do cabeçalho coincide com a conexão e o `UdpEndpoint` coincide com o da conexão. Caso contrário o servidor **ignora** o datagrama (sem resposta) — evita ruído com spoofing de ids.
+**Regra:** `C_PING` só é aceite se existir `NetConnection` + `ClientSession` em `Connected`, `connectionId` do cabeçalho coincide com a conexão e o `UdpEndpoint` coincide com o da conexão. Caso contrário o servidor **ignora** o datagrama (sem resposta) — evita ruído com spoofing de ids. **Ping antes do handshake** ou com `connectionId` inválido: ignorado (sem `S_PONG`).
 
 ## Disconnect
 
@@ -153,18 +157,25 @@ Motivos iniciais (`ConnectRejectReason`):
 
 ## Timeout
 
-- `NetConnectionManager::UpdateTimeouts` remove conexões sem tráfego recebido há **30 s** (constante; configurável no futuro). Sessões associadas são removidas no mesmo tick.
+- `NetConnectionManager::UpdateTimeouts` remove conexões sem tráfego recebido há **`ConnectionTimeoutMs`** (por defeito **30000** ms em `Config/server.json`; mínimo aplicado no arranque: **1000** ms). Sessões associadas são removidas no mesmo tick. Logs: `[Session] Timeout sessionId=... connectionId=...` e `[Net] Connection removed connectionId=... reason=timeout`.
+- **Reliable esgotado**: se um pacote reliable exceder `ReliableMaxResends` reenvios, a entrada é descartada; se ocorrerem falhas deste tipo num tick, a conexão é removida (e a sessão associada). Logs throttled em `[Reliable]` (tentativas 1, 3, 5 e falha final).
 
 ## Configuração
 
 `Config/server.json`:
 
 - **`ListenUdpPort`**: `0` = sem UDP; `1`–`65535` = bind em `0.0.0.0:porta` e processamento no tick fixo.
-- **`NetSimDropPermille`**: `0`–`1000` — probabilidade aproximada de **descartar** datagramas UDP recebidos (desenvolvimento); `0` = desligado.
+- **`NetSimDropPermille`**: `0`–`1000` — probabilidade aproximada de **descartar** datagramas UDP recebidos (desenvolvimento); `0` = desligado. `100` ≈ 10%, `300` ≈ 30%, `700` ≈ 70%, `1000` = 100% (handshake torna-se impraticável).
+- **`ConnectionTimeoutMs`**: inatividade (sem datagramas recebidos) antes de remover a conexão (por defeito `30000`).
+- **`NetworkDebugAck`**: `true` para logs `[NetAck] rx sequence=... ack=... ackBits=...` em cada datagrama aceite (uso pontual; pode ser verboso).
+- **`ReliableResendIntervalMs`**: intervalo mínimo entre reenvios de um pacote reliable (por defeito `250`).
+- **`ReliableMaxResends`**: máximo de reenvios por sequência reliable antes de desistir (por defeito `12`; `0` desativa reenvios).
+- **`MaxLoadingFragmentCount`**, **`MaxReassemblyBytes`**, **`ReassemblyTimeoutMs`**: limites ao reassembly de `C_LOADING_FRAGMENT` (por defeito `4096`, `4194304`, `60000`).
+- **`MaxOrderedPendingPerChannel`**, **`MaxOrderedGap`**: fila de reordenação `ReliableOrdered` (por defeito `64` e `128`).
 
 ## Métricas e diagnóstico
 
-- `PacketStats` (contadores: recebidos, rejeitados por regras/parse, drops do simulador, reenvios reliable, envios, assemblies de loading concluídos).
+- `PacketStats` (contadores: recebidos, rejeitados por regras/parse, drops do simulador, reenvios reliable, give-ups reliable, fila ordered cheia, envios, assemblies de loading concluídos).
 - `NetworkDiagnostics::LastRttMs` atualizado a partir de `C_PING` (estimativa grosseira).
 
 Log esperado à subida:
@@ -184,13 +195,21 @@ npm run build
 npm start -- --host 127.0.0.1 --port 27777
 ```
 
-Comandos interativos: `connect`, `ping`, `disconnect`, `quit`.
+Comandos interativos (entre outros): `connect`, `ping`, `disconnect`, `reliable`, `ordered`, `ordered-ooo`, `fragment`, `spam-ping`, `reconnect`, `auto`, `stress-basic`, `quit`.
 
-Modo automático (handshake + 3× ping + disconnect):
+Modo automático mínimo (`connect` → `ping` → `reliable` → `ordered` → `disconnect`):
 
 ```bash
 node dist/index.js --host 127.0.0.1 --port 27777 --auto
 ```
+
+Ou comando posicional:
+
+```bash
+node dist/index.js --host 127.0.0.1 --port 27777 auto
+```
+
+Opcodes de teste (sem gameplay): `C_TEST_RELIABLE` / `S_TEST_RELIABLE` (1100/1101), `C_TEST_ORDERED` / `S_TEST_ORDERED` (1110/1111), canal `Gameplay`.
 
 ## Ainda **não** implementado
 

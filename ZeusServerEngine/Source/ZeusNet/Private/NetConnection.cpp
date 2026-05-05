@@ -138,9 +138,24 @@ std::uint32_t NetConnection::FlushOutboundQueues(
     return sentTotal;
 }
 
-void NetConnection::TickReliabilityResends(UdpServer& udp, const std::uint64_t wallTimeMs, PacketStats* stats)
+void NetConnection::TickReliabilityResends(
+    UdpServer& udp,
+    const std::uint64_t wallTimeMs,
+    PacketStats* stats,
+    std::uint32_t* giveUpsOut)
 {
-    reliability_.TickResends(udp, endpoint_, wallTimeMs, stats);
+    reliability_.TickResends(udp, endpoint_, wallTimeMs, stats, giveUpsOut);
+}
+
+void NetConnection::SetReliabilityPolicy(const double resendIntervalSeconds, const std::uint32_t maxResends)
+{
+    reliability_.SetPolicy(resendIntervalSeconds, maxResends);
+}
+
+void NetConnection::SetOrderedInboundLimits(const std::uint32_t maxPendingPerChannel, const std::uint32_t maxGap)
+{
+    maxOrderedPendingPerChannel_ = maxPendingPerChannel == 0 ? 64u : maxPendingPerChannel;
+    maxOrderedGap_ = maxGap == 0 ? 128u : maxGap;
 }
 
 void NetConnection::RegisterReliableOutboundEcho(
@@ -167,23 +182,85 @@ std::uint16_t NetConnection::NextReliableOrderId(const Zeus::Protocol::ENetChann
     return v;
 }
 
-bool NetConnection::TryAcceptInboundReliableOrdered(
+OrderedInboundResult NetConnection::SubmitInboundReliableOrdered(
     const Zeus::Protocol::ENetChannel channel,
-    const std::uint16_t orderId)
+    const std::uint16_t orderId,
+    const std::uint16_t opcode,
+    const std::uint32_t remoteSequence,
+    const std::uint8_t* payload,
+    const std::size_t payloadSize,
+    std::vector<FOrderedInboundReleased>& outReleased)
 {
+    outReleased.clear();
     const std::size_t idx = ChannelIndex(channel);
-    if (orderId != nextInboundReliableOrderExpected_[idx])
+    const std::uint16_t exp = nextInboundReliableOrderExpected_[idx];
+    std::map<std::uint16_t, FOrderedInboundStored>& pending = orderedInboundPending_[idx];
+
+    if (orderId < exp)
     {
-        return false;
+        return OrderedInboundResult::DuplicateOld;
     }
+
+    auto pushReleased = [&outReleased](const std::uint16_t op, const std::uint32_t seq, const std::uint8_t* pl, const std::size_t n) {
+        FOrderedInboundReleased r{};
+        r.Opcode = op;
+        r.RemoteSequence = seq;
+        r.Payload.assign(pl, pl + n);
+        outReleased.push_back(std::move(r));
+    };
+
+    if (orderId > exp)
+    {
+        const std::uint32_t ahead =
+            static_cast<std::uint32_t>(orderId) - static_cast<std::uint32_t>(exp);
+        if (ahead > static_cast<std::uint32_t>(maxOrderedGap_))
+        {
+            return OrderedInboundResult::QueueFull;
+        }
+        if (pending.size() >= maxOrderedPendingPerChannel_)
+        {
+            return OrderedInboundResult::QueueFull;
+        }
+        if (pending.find(orderId) != pending.end())
+        {
+            return OrderedInboundResult::DuplicateOld;
+        }
+        FOrderedInboundStored st{};
+        st.Opcode = opcode;
+        st.RemoteSequence = remoteSequence;
+        if (payload != nullptr && payloadSize > 0)
+        {
+            st.Payload.assign(payload, payload + payloadSize);
+        }
+        pending.emplace(orderId, std::move(st));
+        return OrderedInboundResult::QueuedFuture;
+    }
+
+    pushReleased(opcode, remoteSequence, payload, payloadSize);
     ++nextInboundReliableOrderExpected_[idx];
-    return true;
+    std::uint16_t nextId = static_cast<std::uint16_t>(nextInboundReliableOrderExpected_[idx]);
+    for (;;)
+    {
+        const auto it = pending.find(nextId);
+        if (it == pending.end())
+        {
+            break;
+        }
+        FOrderedInboundStored moved = std::move(it->second);
+        pending.erase(it);
+        pushReleased(moved.Opcode, moved.RemoteSequence, moved.Payload.data(), moved.Payload.size());
+        ++nextInboundReliableOrderExpected_[idx];
+        nextId = static_cast<std::uint16_t>(nextInboundReliableOrderExpected_[idx]);
+    }
+
+    return OrderedInboundResult::Delivered;
 }
 
 void NetConnection::ResetInboundReliableOrder(const Zeus::Protocol::ENetChannel channel)
 {
     const std::size_t idx = ChannelIndex(channel);
     nextInboundReliableOrderExpected_[idx] = 0;
+    orderedInboundPending_[idx].clear();
 }
 
 std::size_t NetConnection::ChannelIndex(const Zeus::Protocol::ENetChannel channel)

@@ -1,0 +1,4 @@
+# TEST-010 parte A: idle > ConnectionTimeoutMs, ping deve falhar
+connect
+wait 4000
+ping

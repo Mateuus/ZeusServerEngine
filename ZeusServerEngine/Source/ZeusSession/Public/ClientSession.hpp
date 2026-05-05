@@ -51,6 +51,9 @@ public:
         const std::uint8_t* data,
         std::size_t dataLen,
         double nowMonotonicSeconds,
+        std::uint32_t maxFragmentCount,
+        std::uint32_t maxReassemblyBytes,
+        double reassemblyTimeoutSeconds,
         Zeus::Net::PacketStats* stats);
 
 private:
@@ -69,6 +72,7 @@ private:
         std::uint64_t snapshotId = 0;
         std::uint16_t chunkCount = 0;
         double startedAtMono = 0.0;
+        std::size_t totalPayloadBytes = 0;
         std::vector<std::vector<std::uint8_t>> chunks;
         std::vector<bool> received;
     };

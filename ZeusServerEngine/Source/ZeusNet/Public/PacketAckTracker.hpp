@@ -28,14 +28,16 @@ public:
 
     void OnAckReceived(std::uint32_t ack, std::uint32_t ackBits);
 
-    /** Reenvia cópias pendentes; incrementa `ResendCount` e atualiza `SentAtWallMs`. */
+    /** Reenvia cópias pendentes; incrementa `ResendCount` e atualiza `SentAtWallMs`.
+     *  Se exceder `maxResends`, remove a entrada e incrementa `*giveUpsOut` (opcional). */
     void TickResend(
         UdpServer& udp,
         const UdpEndpoint& to,
         std::uint64_t nowWallMs,
         double resendIntervalSeconds,
         std::uint32_t maxResends,
-        PacketStats* stats);
+        PacketStats* stats,
+        std::uint32_t* giveUpsOut);
 
     void Clear();
 

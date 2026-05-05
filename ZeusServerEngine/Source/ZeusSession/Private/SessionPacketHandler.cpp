@@ -22,7 +22,9 @@
 #include "UdpServer.hpp"
 #include "ZeusLog.hpp"
 
+#include <cctype>
 #include <functional>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -32,7 +34,28 @@ namespace Zeus::Session
 namespace
 {
 constexpr std::uint32_t kHeartbeatIntervalMs = 5000;
-constexpr double kConnectionIdleTimeoutSeconds = 30.0;
+
+void TrimClientBuildInPlace(std::string& s)
+{
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+    {
+        s.erase(0, 1);
+    }
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
+    {
+        s.pop_back();
+    }
+}
+
+[[nodiscard]] bool ClientBuildLooksValid(std::string& clientBuild)
+{
+    TrimClientBuildInPlace(clientBuild);
+    if (clientBuild.empty() || clientBuild.size() > 256)
+    {
+        return false;
+    }
+    return true;
+}
 
 [[nodiscard]] bool IsReliableDelivery(const Zeus::Protocol::ENetDelivery d)
 {
@@ -197,6 +220,14 @@ void SessionPacketHandler::OnDatagram(
         ++packetStats_->DatagramsReceived;
     }
 
+    if (settings_.networkDebugAck)
+    {
+        std::ostringstream ackoss;
+        ackoss << "[NetAck] rx sequence=" << parsed.header.sequence << " ack=" << parsed.header.ack << " ackBits=0x"
+               << std::hex << parsed.header.ackBits << std::dec;
+        ZeusLog::Info("NetAck", ackoss.str());
+    }
+
     const std::uint16_t op = parsed.header.opcode;
     const auto opcodeEnum = static_cast<Zeus::Protocol::EOpcode>(op);
 
@@ -302,6 +333,57 @@ void SessionPacketHandler::OnDatagram(
                         Zeus::Protocol::ConnectRejectPayload rj{};
                         rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
                         rj.reasonMessage = "Invalid connect payload.";
+                        return Zeus::Protocol::WriteConnectRejectPayload(w, rj);
+                    });
+            }
+            return;
+        }
+
+        const bool idempotentConnected =
+            existingSession != nullptr && existingSession->GetState() == SessionState::Connected;
+        if (!idempotentConnected && !ClientBuildLooksValid(body.clientBuild))
+        {
+            if (nc != nullptr)
+            {
+                (void)SendOne(
+                    udp,
+                    from,
+                    nc,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_REJECT),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    nc->GetConnectionId(),
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
+                    [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
+                        Zeus::Protocol::ConnectRejectPayload rj{};
+                        rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
+                        rj.reasonMessage = "Invalid client build.";
+                        return Zeus::Protocol::WriteConnectRejectPayload(w, rj);
+                    });
+                sessions.RemoveByConnectionId(nc->GetConnectionId());
+                connections.RemoveConnection(nc->GetConnectionId());
+            }
+            else
+            {
+                (void)SendOne(
+                    udp,
+                    from,
+                    nullptr,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_REJECT),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    Zeus::Net::kInvalidConnectionId,
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
+                    [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
+                        Zeus::Protocol::ConnectRejectPayload rj{};
+                        rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
+                        rj.reasonMessage = "Invalid client build.";
                         return Zeus::Protocol::WriteConnectRejectPayload(w, rj);
                     });
             }
@@ -525,23 +607,90 @@ void SessionPacketHandler::OnDatagram(
         {
             return;
         }
-        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Loading, parsed.header.flags))
+
+        std::vector<Zeus::Net::FOrderedInboundReleased> orderedBatch;
+        const Zeus::Net::OrderedInboundResult oir = nc->SubmitInboundReliableOrdered(
+            Zeus::Protocol::ENetChannel::Loading,
+            parsed.header.flags,
+            op,
+            parsed.header.sequence,
+            parsed.payload,
+            parsed.payloadSize,
+            orderedBatch);
+        if (oir == Zeus::Net::OrderedInboundResult::DuplicateOld)
         {
+            return;
+        }
+        if (oir == Zeus::Net::OrderedInboundResult::QueueFull)
+        {
+            if (packetStats_ != nullptr)
+            {
+                ++packetStats_->OrderedInboundQueueFull;
+            }
+            return;
+        }
+        if (oir == Zeus::Net::OrderedInboundResult::QueuedFuture)
+        {
+            nc->MarkReceived(parsed.header.sequence);
+            nc->MarkReceive(nowMonotonicSeconds);
             return;
         }
 
-        Zeus::Protocol::ConnectResponsePayload resp{};
-        if (!Zeus::Protocol::ReadConnectResponsePayload(parsed.payload, parsed.payloadSize, resp).Ok())
+        for (const Zeus::Net::FOrderedInboundReleased& w : orderedBatch)
         {
-            return;
-        }
-        if (resp.clientNonce != session->GetClientHandshakeNonce() || resp.serverNonce != session->GetServerChallengeNonce())
-        {
-            return;
-        }
+            Zeus::Protocol::ConnectResponsePayload resp{};
+            if (!Zeus::Protocol::ReadConnectResponsePayload(w.Payload.data(), w.Payload.size(), resp).Ok())
+            {
+                (void)SendOne(
+                    udp,
+                    from,
+                    nc,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_REJECT),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    nc->GetConnectionId(),
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
+                    [](Zeus::Protocol::PacketWriter& w2) -> ZeusResult {
+                        Zeus::Protocol::ConnectRejectPayload rj{};
+                        rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidPacket);
+                        rj.reasonMessage = "Invalid connect response payload.";
+                        return Zeus::Protocol::WriteConnectRejectPayload(w2, rj);
+                    });
+                sessions.RemoveByConnectionId(nc->GetConnectionId());
+                connections.RemoveConnection(nc->GetConnectionId());
+                return;
+            }
+            if (resp.clientNonce != session->GetClientHandshakeNonce() || resp.serverNonce != session->GetServerChallengeNonce())
+            {
+                (void)SendOne(
+                    udp,
+                    from,
+                    nc,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_CONNECT_REJECT),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    nc->GetConnectionId(),
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    true,
+                    packetStats_,
+                    [](Zeus::Protocol::PacketWriter& w2) -> ZeusResult {
+                        Zeus::Protocol::ConnectRejectPayload rj{};
+                        rj.reasonCode = static_cast<std::uint16_t>(Zeus::Protocol::ConnectRejectReason::InvalidHandshake);
+                        rj.reasonMessage = "Invalid connect handshake nonces.";
+                        return Zeus::Protocol::WriteConnectRejectPayload(w2, rj);
+                    });
+                sessions.RemoveByConnectionId(nc->GetConnectionId());
+                connections.RemoveConnection(nc->GetConnectionId());
+                return;
+            }
 
-        LogPacketIn(from, op, parsed.header.sequence);
-        nc->MarkReceived(parsed.header.sequence);
+            LogPacketIn(from, w.Opcode, w.RemoteSequence);
+            nc->MarkReceived(w.RemoteSequence);
+        }
         nc->MarkReceive(nowMonotonicSeconds);
         session->SetState(SessionState::Connected);
         session->SetLastPacketAtSeconds(nowMonotonicSeconds);
@@ -664,7 +813,7 @@ void SessionPacketHandler::OnDatagram(
             nc->GetConnectionId(),
             nowMonotonicSeconds,
             serverWallTimeMs,
-            false,
+            true,
             packetStats_,
             [&dok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteDisconnectOkPayload(w, dok); });
 
@@ -736,30 +885,62 @@ void SessionPacketHandler::OnDatagram(
         {
             return;
         }
-        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Gameplay, parsed.header.flags))
+
+        std::vector<Zeus::Net::FOrderedInboundReleased> orderedBatch;
+        const Zeus::Net::OrderedInboundResult oir = nc->SubmitInboundReliableOrdered(
+            Zeus::Protocol::ENetChannel::Gameplay,
+            parsed.header.flags,
+            op,
+            parsed.header.sequence,
+            parsed.payload,
+            parsed.payloadSize,
+            orderedBatch);
+        if (oir == Zeus::Net::OrderedInboundResult::DuplicateOld)
         {
             return;
         }
-        LogPacketIn(from, op, parsed.header.sequence);
-        nc->MarkReceived(parsed.header.sequence);
+        if (oir == Zeus::Net::OrderedInboundResult::QueueFull)
+        {
+            if (packetStats_ != nullptr)
+            {
+                ++packetStats_->OrderedInboundQueueFull;
+            }
+            return;
+        }
+        if (oir == Zeus::Net::OrderedInboundResult::QueuedFuture)
+        {
+            nc->MarkReceived(parsed.header.sequence);
+            nc->MarkReceive(nowMonotonicSeconds);
+            return;
+        }
+
+        for (const Zeus::Net::FOrderedInboundReleased& w : orderedBatch)
+        {
+            LogPacketIn(from, w.Opcode, w.RemoteSequence);
+            nc->MarkReceived(w.RemoteSequence);
+        }
         nc->MarkReceive(nowMonotonicSeconds);
         session->SetLastPacketAtSeconds(nowMonotonicSeconds);
-        (void)SendOne(
-            udp,
-            from,
-            nc,
-            static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TEST_ORDERED),
-            Zeus::Protocol::ENetChannel::Gameplay,
-            Zeus::Protocol::ENetDelivery::ReliableOrdered,
-            nc->GetConnectionId(),
-            nowMonotonicSeconds,
-            serverWallTimeMs,
-            false,
-            packetStats_,
-            [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
-                (void)w;
-                return ZeusResult::Success();
-            });
+        for (const auto& ignoredOrdered : orderedBatch)
+        {
+            (void)ignoredOrdered;
+            (void)SendOne(
+                udp,
+                from,
+                nc,
+                static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_TEST_ORDERED),
+                Zeus::Protocol::ENetChannel::Gameplay,
+                Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                nc->GetConnectionId(),
+                nowMonotonicSeconds,
+                serverWallTimeMs,
+                false,
+                packetStats_,
+                [](Zeus::Protocol::PacketWriter& w) -> ZeusResult {
+                    (void)w;
+                    return ZeusResult::Success();
+                });
+        }
         return;
     }
 
@@ -779,44 +960,79 @@ void SessionPacketHandler::OnDatagram(
         {
             return;
         }
-        if (!nc->TryAcceptInboundReliableOrdered(Zeus::Protocol::ENetChannel::Loading, parsed.header.flags))
+
+        std::vector<Zeus::Net::FOrderedInboundReleased> orderedBatch;
+        const Zeus::Net::OrderedInboundResult oir = nc->SubmitInboundReliableOrdered(
+            Zeus::Protocol::ENetChannel::Loading,
+            parsed.header.flags,
+            op,
+            parsed.header.sequence,
+            parsed.payload,
+            parsed.payloadSize,
+            orderedBatch);
+        if (oir == Zeus::Net::OrderedInboundResult::DuplicateOld)
         {
             return;
         }
-        Zeus::Protocol::LoadingFragmentPayload frag{};
-        if (!Zeus::Protocol::ReadLoadingFragmentPayload(parsed.payload, parsed.payloadSize, frag).Ok())
+        if (oir == Zeus::Net::OrderedInboundResult::QueueFull)
         {
+            if (packetStats_ != nullptr)
+            {
+                ++packetStats_->OrderedInboundQueueFull;
+            }
             return;
         }
-        LogPacketIn(from, op, parsed.header.sequence);
-        nc->MarkReceived(parsed.header.sequence);
-        nc->MarkReceive(nowMonotonicSeconds);
-        session->SetLastPacketAtSeconds(nowMonotonicSeconds);
-        const ClientSession::LoadingFragmentResult fr = session->FeedLoadingFragment(
-            frag.snapshotId,
-            frag.chunkIndex,
-            frag.chunkCount,
-            frag.data.data(),
-            frag.data.size(),
-            nowMonotonicSeconds,
-            packetStats_);
-        if (fr == ClientSession::LoadingFragmentResult::Completed)
+        if (oir == Zeus::Net::OrderedInboundResult::QueuedFuture)
         {
-            Zeus::Protocol::LoadingAssembledOkPayload ok{};
-            ok.snapshotId = frag.snapshotId;
-            (void)SendOne(
-                udp,
-                from,
-                nc,
-                static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_LOADING_ASSEMBLED_OK),
-                Zeus::Protocol::ENetChannel::Loading,
-                Zeus::Protocol::ENetDelivery::ReliableOrdered,
-                nc->GetConnectionId(),
+            nc->MarkReceived(parsed.header.sequence);
+            nc->MarkReceive(nowMonotonicSeconds);
+            return;
+        }
+
+        const double reassemblyTimeoutSec =
+            settings_.reassemblyTimeoutMs > 0 ? static_cast<double>(settings_.reassemblyTimeoutMs) / 1000.0 : 60.0;
+        for (const Zeus::Net::FOrderedInboundReleased& w : orderedBatch)
+        {
+            Zeus::Protocol::LoadingFragmentPayload frag{};
+            if (!Zeus::Protocol::ReadLoadingFragmentPayload(w.Payload.data(), w.Payload.size(), frag).Ok())
+            {
+                return;
+            }
+            LogPacketIn(from, w.Opcode, w.RemoteSequence);
+            nc->MarkReceived(w.RemoteSequence);
+            nc->MarkReceive(nowMonotonicSeconds);
+            session->SetLastPacketAtSeconds(nowMonotonicSeconds);
+            const ClientSession::LoadingFragmentResult fr = session->FeedLoadingFragment(
+                frag.snapshotId,
+                frag.chunkIndex,
+                frag.chunkCount,
+                frag.data.data(),
+                frag.data.size(),
                 nowMonotonicSeconds,
-                serverWallTimeMs,
-                false,
-                packetStats_,
-                [&ok](Zeus::Protocol::PacketWriter& w) -> ZeusResult { return Zeus::Protocol::WriteLoadingAssembledOkPayload(w, ok); });
+                settings_.maxLoadingFragmentCount,
+                settings_.maxReassemblyBytes,
+                reassemblyTimeoutSec,
+                packetStats_);
+            if (fr == ClientSession::LoadingFragmentResult::Completed)
+            {
+                Zeus::Protocol::LoadingAssembledOkPayload ok{};
+                ok.snapshotId = frag.snapshotId;
+                (void)SendOne(
+                    udp,
+                    from,
+                    nc,
+                    static_cast<std::uint16_t>(Zeus::Protocol::EOpcode::S_LOADING_ASSEMBLED_OK),
+                    Zeus::Protocol::ENetChannel::Loading,
+                    Zeus::Protocol::ENetDelivery::ReliableOrdered,
+                    nc->GetConnectionId(),
+                    nowMonotonicSeconds,
+                    serverWallTimeMs,
+                    false,
+                    packetStats_,
+                    [&ok](Zeus::Protocol::PacketWriter& w2) -> ZeusResult {
+                        return Zeus::Protocol::WriteLoadingAssembledOkPayload(w2, ok);
+                    });
+            }
         }
         return;
     }
@@ -825,11 +1041,23 @@ void SessionPacketHandler::OnDatagram(
 void SessionPacketHandler::OnTickPostNetwork(
     Zeus::Net::UdpServer& udp,
     Zeus::Net::NetConnectionManager& connections,
+    SessionManager& sessions,
     const double nowMonotonicSeconds,
     const std::uint64_t serverWallTimeMs)
 {
     (void)nowMonotonicSeconds;
-    connections.TickAllReliabilityResends(udp, serverWallTimeMs, packetStats_);
+    std::vector<Zeus::Net::ConnectionId> reliableDead;
+    connections.TickAllReliabilityResends(udp, serverWallTimeMs, packetStats_, reliableDead);
+    for (const Zeus::Net::ConnectionId id : reliableDead)
+    {
+        ClientSession* sess = sessions.FindByConnectionId(id);
+        const Zeus::Net::SessionId sid = sess != nullptr ? sess->GetSessionId() : 0;
+        sessions.RemoveByConnectionId(id);
+        connections.RemoveConnection(id);
+        std::ostringstream oss;
+        oss << "[Reliable] connection dropped after reliable give-up sessionId=" << sid << " connectionId=" << id;
+        ZeusLog::Warning("Net", oss.str());
+    }
     constexpr std::uint32_t kBudget = Zeus::Protocol::ZEUS_MAX_PACKET_BYTES * 64u;
     connections.FlushAllOutbound(udp, kBudget, serverWallTimeMs, nowMonotonicSeconds, packetStats_);
 }
@@ -839,12 +1067,21 @@ void SessionPacketHandler::OnTickTimeouts(
     SessionManager& sessions,
     const double nowMonotonicSeconds)
 {
+    const double timeoutSec =
+        settings_.connectionTimeoutMs > 0 ? static_cast<double>(settings_.connectionTimeoutMs) / 1000.0 : 30.0;
     std::vector<Zeus::Net::ConnectionId> removed;
-    connections.UpdateTimeouts(nowMonotonicSeconds, kConnectionIdleTimeoutSeconds, removed);
+    connections.UpdateTimeouts(nowMonotonicSeconds, timeoutSec, removed);
     for (const Zeus::Net::ConnectionId id : removed)
     {
+        ClientSession* sess = sessions.FindByConnectionId(id);
+        const Zeus::Net::SessionId sid = sess != nullptr ? sess->GetSessionId() : 0;
         sessions.RemoveByConnectionId(id);
-        ZeusLog::Info("Net", std::string("Connection timed out connectionId=") + std::to_string(id));
+        std::ostringstream smsg;
+        smsg << "[Session] Timeout sessionId=" << sid << " connectionId=" << id;
+        ZeusLog::Info("Session", smsg.str());
+        std::ostringstream nmsg;
+        nmsg << "[Net] Connection removed connectionId=" << id << " reason=timeout";
+        ZeusLog::Info("Net", nmsg.str());
     }
 }
 } // namespace Zeus::Session

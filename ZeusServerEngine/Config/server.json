@@ -4,5 +4,14 @@
   "SessionLogDir": "Logs",
   "DebugOverlayRows": 0,
   "ListenUdpPort": 27777,
-  "NetSimDropPermille": 0
+  "NetSimDropPermille": 0,
+  "ConnectionTimeoutMs": 30000,
+  "NetworkDebugAck": false,
+  "ReliableResendIntervalMs": 250,
+  "ReliableMaxResends": 12,
+  "MaxLoadingFragmentCount": 4096,
+  "MaxReassemblyBytes": 4194304,
+  "ReassemblyTimeoutMs": 60000,
+  "MaxOrderedPendingPerChannel": 64,
+  "MaxOrderedGap": 128
 }

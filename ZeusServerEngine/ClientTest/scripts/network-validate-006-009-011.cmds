@@ -1,0 +1,8 @@
+# TEST-006 reconnect, TEST-009 ordered-ooo, TEST-011 fragment
+connect
+ordered-ooo
+fragment
+disconnect
+reconnect
+ping
+disconnect

@@ -14,5 +14,7 @@ struct PacketStats
     std::uint64_t ReliableResends = 0;
     std::uint64_t OutboundDatagrams = 0;
     std::uint64_t LoadingAssembliesCompleted = 0;
+    std::uint64_t OrderedInboundQueueFull = 0;
+    std::uint64_t ReliableGiveUps = 0;
 };
 } // namespace Zeus::Net

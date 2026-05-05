@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PacketParser.hpp"
+#include "SessionNetworkSettings.hpp"
 
 #include <cstdint>
 
@@ -25,6 +26,8 @@ public:
 
     void SetNetworkDiagnostics(Zeus::Net::NetworkDiagnostics* diag) { networkDiagnostics_ = diag; }
 
+    void Configure(const SessionNetworkSettings& settings) { settings_ = settings; }
+
     void OnDatagram(
         Zeus::Net::UdpServer& udp,
         Zeus::Net::NetConnectionManager& connections,
@@ -38,6 +41,7 @@ public:
     void OnTickPostNetwork(
         Zeus::Net::UdpServer& udp,
         Zeus::Net::NetConnectionManager& connections,
+        SessionManager& sessions,
         double nowMonotonicSeconds,
         std::uint64_t serverWallTimeMs);
 
@@ -49,5 +53,6 @@ public:
 private:
     Zeus::Net::PacketStats* packetStats_ = nullptr;
     Zeus::Net::NetworkDiagnostics* networkDiagnostics_ = nullptr;
+    SessionNetworkSettings settings_{};
 };
 } // namespace Zeus::Session

@@ -42,7 +42,15 @@ public:
         double nowMonotonicSeconds,
         PacketStats* stats);
 
-    void TickAllReliabilityResends(UdpServer& udp, std::uint64_t wallTimeMs, PacketStats* stats);
+    void TickAllReliabilityResends(
+        UdpServer& udp,
+        std::uint64_t wallTimeMs,
+        PacketStats* stats,
+        std::vector<ConnectionId>& reliableFailedConnectionsOut);
+
+    void SetReliabilitySendPolicy(double resendIntervalSeconds, std::uint32_t maxResends);
+
+    void SetOrderedInboundPolicy(std::uint32_t maxPendingPerChannel, std::uint32_t maxGap);
 
 private:
     [[nodiscard]] static std::uint64_t EndpointKey(const UdpEndpoint& e);
@@ -50,5 +58,10 @@ private:
     ConnectionId nextConnectionId_ = 1;
     std::unordered_map<ConnectionId, std::unique_ptr<NetConnection>> byId_;
     std::unordered_map<std::uint64_t, ConnectionId> endpointToId_;
+
+    double reliabilityResendIntervalSec_ = 0.25;
+    std::uint32_t reliabilityMaxResends_ = 12;
+    std::uint32_t orderedMaxPending_ = 64;
+    std::uint32_t orderedMaxGap_ = 128;
 };
 } // namespace Zeus::Net

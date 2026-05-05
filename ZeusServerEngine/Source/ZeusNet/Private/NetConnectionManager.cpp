@@ -55,6 +55,8 @@ NetConnection* NetConnectionManager::CreateConnection(const UdpEndpoint& endpoin
     const ConnectionId id = nextConnectionId_++;
     auto conn = std::make_unique<NetConnection>(id, endpoint);
     NetConnection* raw = conn.get();
+    raw->SetReliabilityPolicy(reliabilityResendIntervalSec_, reliabilityMaxResends_);
+    raw->SetOrderedInboundLimits(orderedMaxPending_, orderedMaxGap_);
     byId_.emplace(id, std::move(conn));
     endpointToId_.emplace(EndpointKey(endpoint), id);
     raw->SetConnected(true);
@@ -122,11 +124,38 @@ void NetConnectionManager::FlushAllOutbound(
 void NetConnectionManager::TickAllReliabilityResends(
     UdpServer& udp,
     const std::uint64_t wallTimeMs,
-    PacketStats* stats)
+    PacketStats* stats,
+    std::vector<ConnectionId>& reliableFailedConnectionsOut)
 {
+    reliableFailedConnectionsOut.clear();
     for (auto& kv : byId_)
     {
-        kv.second->TickReliabilityResends(udp, wallTimeMs, stats);
+        std::uint32_t giveUps = 0;
+        kv.second->TickReliabilityResends(udp, wallTimeMs, stats, &giveUps);
+        if (giveUps > 0u)
+        {
+            reliableFailedConnectionsOut.push_back(kv.first);
+        }
+    }
+}
+
+void NetConnectionManager::SetReliabilitySendPolicy(const double resendIntervalSeconds, const std::uint32_t maxResends)
+{
+    reliabilityResendIntervalSec_ = resendIntervalSeconds > 0.0 ? resendIntervalSeconds : 0.25;
+    reliabilityMaxResends_ = maxResends;
+    for (auto& kv : byId_)
+    {
+        kv.second->SetReliabilityPolicy(reliabilityResendIntervalSec_, reliabilityMaxResends_);
+    }
+}
+
+void NetConnectionManager::SetOrderedInboundPolicy(const std::uint32_t maxPendingPerChannel, const std::uint32_t maxGap)
+{
+    orderedMaxPending_ = maxPendingPerChannel == 0 ? 64u : maxPendingPerChannel;
+    orderedMaxGap_ = maxGap == 0 ? 128u : maxGap;
+    for (auto& kv : byId_)
+    {
+        kv.second->SetOrderedInboundLimits(orderedMaxPending_, orderedMaxGap_);
     }
 }
 } // namespace Zeus::Net

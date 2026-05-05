@@ -67,13 +67,19 @@ Parar: **Ctrl+C** (ou fechar a consola). No Linux, **SIGINT** e **SIGTERM** pede
 | `SessionLogDir` | Pasta onde é criado um **`.log` por arranque** (`ZeusServer_YYYYMMDD_HHMMSS.log`), cópia espelhada de tudo o que vai para o log da consola |
 | `DebugOverlayRows` | Linhas fixas no **fundo do terminal** (VT + margem de scroll). `0` = desligado. Ideal no futuro para posição de player / replicação sem encher o stderr |
 | `ListenUdpPort` | Se `1`–`65535`, abre **UDP** e valida pacotes Zeus em cada tick; `0` = sem rede (defeito) |
+| `NetSimDropPermille` | `0`–`1000`: probabilidade aproximada de descartar datagramas recebidos (dev) |
+| `ConnectionTimeoutMs` | Inatividade antes de remover a conexão (ms) |
+| `NetworkDebugAck` | `true` para logs `[NetAck]` por datagrama |
+| `ReliableResendIntervalMs` / `ReliableMaxResends` | Política de reenvio reliable |
+| `MaxLoadingFragmentCount` / `MaxReassemblyBytes` / `ReassemblyTimeoutMs` | Limites de reassembly Loading |
+| `MaxOrderedPendingPerChannel` / `MaxOrderedGap` | Fila `ReliableOrdered` por canal |
 
-## Parte 2 — rede (handshake + ping + disconnect)
+## Parte 2 + 2.5 — rede (handshake, ping, reliable, ordered, fragmentos, timeout)
 
-- **`ZeusProtocol`**: wire + `SessionWire` (payloads connect/reject/ping/pong/disconnect).
-- **`ZeusNet`**: `UdpSocket`, `UdpServer`, `UdpEndpoint`, `NetConnection`, `NetConnectionManager`.
+- **`ZeusProtocol`**: wire + `SessionWire` (payloads connect/reject/ping/pong/disconnect, fragmentos).
+- **`ZeusNet`**: `UdpSocket`, `UdpServer`, `UdpEndpoint`, `NetConnection`, `NetConnectionManager`, `SendQueue`, `ReliabilityLayer`, `PacketAckTracker`, `NetworkSimulator`.
 - **`ZeusSession`**: `ClientSession`, `SessionManager`, `SessionPacketHandler` (despacho de opcodes).
-- Documentação: [`Docs/NETWORK.md`](Docs/NETWORK.md), [`Docs/NEXT_STEPS.md`](Docs/NEXT_STEPS.md). Cliente: [`ClientTest/README.md`](ClientTest/README.md).
+- Documentação: [`Docs/NETWORK.md`](Docs/NETWORK.md), [`Docs/NETWORK_TESTS.md`](Docs/NETWORK_TESTS.md), [`Docs/NEXT_STEPS.md`](Docs/NEXT_STEPS.md). Cliente: [`ClientTest/README.md`](ClientTest/README.md).
 
 - **`ZeusLog`** (implementação em **ZeusPlatform**): mutex partilhado com título e painel VT, para não corromper o cursor.
 - Com **stderr redirecionado** (ficheiro/pipe), o painel in-place desliga-se de forma segura; o **ficheiro de sessão** continua a ser escrito se a pasta existir.
@@ -81,7 +87,7 @@ Parar: **Ctrl+C** (ou fechar a consola). No Linux, **SIGINT** e **SIGTERM** pede
 
 ## Ainda não implementado (fases seguintes)
 
-Filas de envio, reenvio reliable completo, mundo, colisão, movimento, replicação, Jolt, plugin Unreal — ver [`Docs/NEXT_STEPS.md`](Docs/NEXT_STEPS.md).
+Mundo, colisão, movimento, replicação, Jolt, plugin Unreal — ver [`Docs/NEXT_STEPS.md`](Docs/NEXT_STEPS.md).
 
 ## `_WIN32_WINNT`
 

@@ -9,6 +9,7 @@
 #include "PlatformConsoleLive.hpp"
 #include "PlatformTime.hpp"
 #include "SessionManager.hpp"
+#include "SessionNetworkSettings.hpp"
 #include "SessionPacketHandler.hpp"
 #include "UdpServer.hpp"
 #include "ZeusLog.hpp"
@@ -125,6 +126,37 @@ bool ParseJsonIntValue(const std::string& json, const char* key, int& outValue)
     }
     outValue = std::stoi(json.substr(colon, end - colon));
     return true;
+}
+
+bool ParseJsonBoolValue(const std::string& json, const char* key, bool& outValue)
+{
+    const std::string quotedKey = std::string("\"") + key + "\"";
+    const size_t k = json.find(quotedKey);
+    if (k == std::string::npos)
+    {
+        return false;
+    }
+    const size_t colon = json.find(':', k + quotedKey.size());
+    if (colon == std::string::npos)
+    {
+        return false;
+    }
+    size_t p = colon + 1;
+    while (p < json.size() && std::isspace(static_cast<unsigned char>(json[p])))
+    {
+        ++p;
+    }
+    if (p + 4 <= json.size() && json.compare(p, 4, "true") == 0)
+    {
+        outValue = true;
+        return true;
+    }
+    if (p + 5 <= json.size() && json.compare(p, 5, "false") == 0)
+    {
+        outValue = false;
+        return true;
+    }
+    return false;
 }
 
 bool ParseJsonStringValue(const std::string& json, const char* key, std::string& outValue)
@@ -256,6 +288,65 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
     impl_->sessionPacketHandler.SetPacketStats(&impl_->netStats);
     impl_->sessionPacketHandler.SetNetworkDiagnostics(&impl_->netDiag);
 
+    Zeus::Session::SessionNetworkSettings netSettings{};
+    {
+        int connectionTimeoutMs = 30000;
+        if (ParseJsonIntValue(json, "ConnectionTimeoutMs", connectionTimeoutMs))
+        {
+            netSettings.connectionTimeoutMs = std::max(1000, connectionTimeoutMs);
+        }
+        bool networkDebugAck = false;
+        if (ParseJsonBoolValue(json, "NetworkDebugAck", networkDebugAck))
+        {
+            netSettings.networkDebugAck = networkDebugAck;
+        }
+        int reliableResendIntervalMs = 250;
+        if (ParseJsonIntValue(json, "ReliableResendIntervalMs", reliableResendIntervalMs))
+        {
+            netSettings.reliableResendIntervalSec =
+                static_cast<double>(std::max(10, reliableResendIntervalMs)) / 1000.0;
+        }
+        int reliableMaxResends = 12;
+        if (ParseJsonIntValue(json, "ReliableMaxResends", reliableMaxResends))
+        {
+            netSettings.reliableMaxResends =
+                static_cast<std::uint32_t>(std::clamp(reliableMaxResends, 0, 100));
+        }
+        int maxLoadingFragmentCount = 4096;
+        if (ParseJsonIntValue(json, "MaxLoadingFragmentCount", maxLoadingFragmentCount))
+        {
+            netSettings.maxLoadingFragmentCount =
+                static_cast<std::uint32_t>(std::max(1, maxLoadingFragmentCount));
+        }
+        int maxReassemblyBytes = static_cast<int>(netSettings.maxReassemblyBytes);
+        if (ParseJsonIntValue(json, "MaxReassemblyBytes", maxReassemblyBytes))
+        {
+            netSettings.maxReassemblyBytes =
+                static_cast<std::uint32_t>(std::max(1024, maxReassemblyBytes));
+        }
+        int reassemblyTimeoutMs = 60000;
+        if (ParseJsonIntValue(json, "ReassemblyTimeoutMs", reassemblyTimeoutMs))
+        {
+            netSettings.reassemblyTimeoutMs = std::max(1000, reassemblyTimeoutMs);
+        }
+        int maxOrderedPendingPerChannel = 64;
+        if (ParseJsonIntValue(json, "MaxOrderedPendingPerChannel", maxOrderedPendingPerChannel))
+        {
+            netSettings.maxOrderedPendingPerChannel =
+                static_cast<std::uint32_t>(std::max(1, maxOrderedPendingPerChannel));
+        }
+        int maxOrderedGap = 128;
+        if (ParseJsonIntValue(json, "MaxOrderedGap", maxOrderedGap))
+        {
+            netSettings.maxOrderedGap = static_cast<std::uint32_t>(std::max(1, maxOrderedGap));
+        }
+        impl_->sessionPacketHandler.Configure(netSettings);
+        impl_->netConnections.SetReliabilitySendPolicy(
+            netSettings.reliableResendIntervalSec, netSettings.reliableMaxResends);
+        impl_->netConnections.SetOrderedInboundPolicy(
+            netSettings.maxOrderedPendingPerChannel, netSettings.maxOrderedGap);
+    }
+
 #if defined(_WIN32)
     g_consoleHandlerApp = this;
     SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
@@ -350,7 +441,8 @@ ZeusResult CoreServerApp::Initialize(const std::filesystem::path& configPath)
                         parsed,
                         from);
                 });
-                impl_->sessionPacketHandler.OnTickPostNetwork(*impl_->udp, impl_->netConnections, nowMono, wallMs);
+                impl_->sessionPacketHandler.OnTickPostNetwork(
+                    *impl_->udp, impl_->netConnections, impl_->sessions, nowMono, wallMs);
                 impl_->sessionPacketHandler.OnTickTimeouts(impl_->netConnections, impl_->sessions, nowMono);
             });
         }
