@@ -1,5 +1,7 @@
 # Zeus Server Engine (Parte 1 — fundação)
 
+No mono-repo **ZeusProject**, este código vive em **`Server/ZeusServerEngine/`**. O repositório remoto `ZeusServerEngine` usa **`Server/` como raiz do Git** (ver [`../README.md`](../README.md)).
+
 ## Requisitos
 
 ### Windows
