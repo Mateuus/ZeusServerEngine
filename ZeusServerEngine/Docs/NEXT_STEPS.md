@@ -1,5 +1,11 @@
 # Próximos passos — Zeus Server Engine (rede e além)
 
+## Concluído nesta fase (Parte 3.5 — plugin Unreal ZeusNetwork)
+
+- Plugin **`ZeusNetwork`** em `Server/Plugins/Unreal/ZeusNetwork/` (Runtime): `UZeusNetworkSubsystem` (UDP, handshake v2, ping/pong, disconnect, delegates Blueprint, `LogZeusNetwork` + log em `Saved/Logs/ZeusNetwork/session.log`).
+- Projeto cliente `Clients/ZClientMMO`: `AdditionalPluginDirectories` + `ZeusNetwork` ativo no `.uproject`; ver [README do plugin](../../Plugins/Unreal/ZeusNetwork/README.md).
+- ADR **0010** em `.brain/decisoes/adrs/`.
+
 ## Concluído nesta fase (Parte 3 — ZeusWorld + ZeusMath)
 
 - Módulos **`ZeusMath`** e **`ZeusWorld`** (tipos 3D, `Actor`/`ActorComponent`, `EntityManager`, `World`, `Level`, `MapInstance`, `WorldRuntime`, `WorldStats`).

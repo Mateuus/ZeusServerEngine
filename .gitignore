@@ -1,2 +1,6 @@
 .DS_Store
 Thumbs.db
+
+# Unreal plugin ZeusNetwork (artefactos locais de build)
+Plugins/Unreal/ZeusNetwork/Intermediate/
+Plugins/Unreal/ZeusNetwork/Binaries/
