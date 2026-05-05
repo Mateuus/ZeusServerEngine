@@ -12,3 +12,6 @@ Plugins/Unreal/ZeusMapTools/Binaries/
 # CMake out-of-source build folders (Jolt FetchContent + bin)
 ZeusServerEngine/build-collision/
 ZeusServerEngine/build/
+
+# Fonte upstream do Jolt (obter com ZeusServerEngine/Scripts/Fetch-Jolt.ps1); o .vcxproj em ThirdParty/JoltPhysics fica no git
+ZeusServerEngine/ThirdParty/JoltPhysics/Jolt/

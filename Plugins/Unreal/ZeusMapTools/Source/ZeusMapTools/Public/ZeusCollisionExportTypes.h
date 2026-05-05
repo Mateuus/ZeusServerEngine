@@ -107,8 +107,85 @@ struct FZeusExportStats
 	int32 SphereCount = 0;
 	int32 CapsuleCount = 0;
 	int32 ConvexCount = 0;
+	int32 VolumeCount = 0;          // ZSMD
+	int32 TerrainPieceCount = 0;    // ZSMT
+	int32 TriangleMeshCount = 0;    // ZSMT
+	int32 HeightFieldCount = 0;     // ZSMT
 	int32 WarningCount = 0;
 	int32 SkippedActorCount = 0;
+};
+
+/** Tipo de volume dinamico (espelha EDynamicVolumeKind no servidor). */
+enum class EZeusVolumeKind : uint8
+{
+	Unknown    = 0,
+	Trigger    = 1,
+	Water      = 2,
+	Lava       = 3,
+	KillVolume = 4,
+	SafeZone   = 5,
+};
+
+/** Volume dinamico exportado (ZSMD). Os shapes seguem o mesmo formato do estatico. */
+struct FZeusVolumeExport
+{
+	FString VolumeName;
+	FString ActorName;
+	EZeusVolumeKind Kind = EZeusVolumeKind::Trigger;
+	FString EventTag;
+
+	FTransform WorldTransform = FTransform::Identity;
+	FVector BoundsCenter = FVector::ZeroVector;
+	FVector BoundsExtent = FVector::ZeroVector;
+
+	FZeusEntityRegion Region;
+	TArray<FZeusShapeExport> Shapes;
+	TArray<FString> Warnings;
+};
+
+/** Tipo de peca de terreno (ZSMT). */
+enum class EZeusTerrainPieceKind : uint8
+{
+	Unknown      = 0,
+	TriangleMesh = 1,
+	HeightField  = 2,
+};
+
+/** Triangle mesh exportada — vertices em local space (cm), indices em triplos. */
+struct FZeusTriangleMeshExport
+{
+	TArray<FVector> Vertices;
+	TArray<uint32> Indices;
+};
+
+/** HeightField regular grid (cm em local space). */
+struct FZeusHeightFieldExport
+{
+	uint32 SamplesX = 0;
+	uint32 SamplesY = 0;
+	double SampleSpacingCm = 100.0;
+	FVector OriginLocal = FVector::ZeroVector;
+	double HeightScaleCm = 1.0;
+	TArray<float> Heights;
+};
+
+/** Uma peca de terreno (StaticMesh tag Zeus.TriangleMesh ou ALandscape primario). */
+struct FZeusTerrainPieceExport
+{
+	FString PieceName;
+	FString ActorName;
+	FString ComponentName;
+	EZeusTerrainPieceKind Kind = EZeusTerrainPieceKind::Unknown;
+
+	FTransform WorldTransform = FTransform::Identity;
+	FVector BoundsCenter = FVector::ZeroVector;
+	FVector BoundsExtent = FVector::ZeroVector;
+
+	FZeusEntityRegion Region;
+
+	FZeusTriangleMeshExport TriangleMesh;
+	FZeusHeightFieldExport HeightField;
+	TArray<FString> Warnings;
 };
 
 /** Final result returned by the exporter. */
@@ -116,6 +193,8 @@ struct FZeusExportResult
 {
 	FString MapName;
 	TArray<FZeusEntityExport> Entities;
+	TArray<FZeusVolumeExport> Volumes;
+	TArray<FZeusTerrainPieceExport> TerrainPieces;
 	TArray<FString> Warnings;
 	FZeusExportStats Stats;
 };
@@ -126,6 +205,8 @@ struct FZeusExportOptions
 	bool bIncludeSelectedOnly = false;
 	bool bWriteJson = true;
 	bool bWriteZsm = true;
+	bool bWriteDynamicZsm = true;
+	bool bWriteTerrainZsm = true;
 	bool bDrawDebug = false;
 	bool bValidateOnly = false;
 	bool bAllowComplexAsSimple = false;

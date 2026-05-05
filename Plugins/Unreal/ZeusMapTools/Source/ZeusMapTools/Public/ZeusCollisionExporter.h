@@ -40,6 +40,20 @@ private:
 	bool ProcessStaticMeshComponent(AActor* Actor, UStaticMeshComponent* Component,
 		const FZeusExportOptions& Options, FZeusExportResult& InOutResult) const;
 
+	/** ZSMD: extrai um volume dinamico (AVolume + tags Zeus.*). */
+	bool ProcessVolumeActor(AActor* Actor, const FZeusExportOptions& Options, FZeusExportResult& InOutResult) const;
+
+	/**
+	 * ZSMT: extrai TriangleMesh detalhado de um StaticMesh marcado com a tag
+	 * `Zeus.TriangleMesh` (ou quando bAllowComplexAsSimple).
+	 */
+	bool ProcessTriangleMeshActor(AActor* Actor, UStaticMeshComponent* Component,
+		const FZeusExportOptions& Options, FZeusExportResult& InOutResult) const;
+
+	/** ZSMT: extrai HeightField primario do `ALandscape` (1 component nesta fase). */
+	bool ProcessLandscapeActor(AActor* Actor, const FZeusExportOptions& Options,
+		FZeusExportResult& InOutResult) const;
+
 	void WriteOutputs(const FZeusExportOptions& Options, const FZeusExportResult& Result) const;
 
 	static FString ResolveOutputDir(const FZeusExportOptions& Options, const FString& MapName);

@@ -27,7 +27,10 @@ public class ZeusMapTools : ModuleRules
 			"SlateCore",
 			"ToolMenus",
 			"InputCore",
-			"PhysicsCore"
+			"PhysicsCore",
+			"Landscape",
+			"RenderCore",
+			"RHI"
 		});
 	}
 }

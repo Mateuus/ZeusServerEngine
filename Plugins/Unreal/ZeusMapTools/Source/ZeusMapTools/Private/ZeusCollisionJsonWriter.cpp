@@ -89,6 +89,114 @@ namespace
 		return Obj;
 	}
 
+	const TCHAR* VolumeKindToString(EZeusVolumeKind K)
+	{
+		switch (K)
+		{
+		case EZeusVolumeKind::Trigger:    return TEXT("trigger");
+		case EZeusVolumeKind::Water:      return TEXT("water");
+		case EZeusVolumeKind::Lava:       return TEXT("lava");
+		case EZeusVolumeKind::KillVolume: return TEXT("killVolume");
+		case EZeusVolumeKind::SafeZone:   return TEXT("safeZone");
+		default:                          return TEXT("unknown");
+		}
+	}
+
+	const TCHAR* TerrainKindToString(EZeusTerrainPieceKind K)
+	{
+		switch (K)
+		{
+		case EZeusTerrainPieceKind::TriangleMesh: return TEXT("triangleMesh");
+		case EZeusTerrainPieceKind::HeightField:  return TEXT("heightField");
+		default:                                  return TEXT("unknown");
+		}
+	}
+
+	TSharedRef<FJsonObject> RegionToJson(const FZeusEntityRegion& R)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetNumberField(TEXT("regionId"), R.RegionId);
+		Obj->SetNumberField(TEXT("gridX"),    R.GridX);
+		Obj->SetNumberField(TEXT("gridY"),    R.GridY);
+		Obj->SetNumberField(TEXT("gridZ"),    R.GridZ);
+		Obj->SetNumberField(TEXT("regionSizeCm"), R.RegionSizeCm);
+		return Obj;
+	}
+
+	TSharedRef<FJsonObject> VolumeToJson(const FZeusVolumeExport& Vol)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("volumeName"), Vol.VolumeName);
+		Obj->SetStringField(TEXT("actorName"),  Vol.ActorName);
+		Obj->SetStringField(TEXT("kind"),       VolumeKindToString(Vol.Kind));
+		Obj->SetStringField(TEXT("eventTag"),   Vol.EventTag);
+
+		Obj->SetObjectField(TEXT("region"), RegionToJson(Vol.Region));
+
+		TSharedRef<FJsonObject> Bounds = MakeShared<FJsonObject>();
+		Bounds->SetField(TEXT("center"), Vector3ToJson(Vol.BoundsCenter));
+		Bounds->SetField(TEXT("extent"), Vector3ToJson(Vol.BoundsExtent));
+		Obj->SetObjectField(TEXT("bounds"), Bounds);
+
+		Obj->SetField(TEXT("worldTransform"),
+			MakeShared<FJsonValueObject>(TransformToJson(Vol.WorldTransform)));
+
+		TArray<TSharedPtr<FJsonValue>> ShapeArr;
+		ShapeArr.Reserve(Vol.Shapes.Num());
+		for (const FZeusShapeExport& Shape : Vol.Shapes)
+		{
+			ShapeArr.Add(MakeShared<FJsonValueObject>(ShapeToJson(Shape)));
+		}
+		Obj->SetArrayField(TEXT("shapes"), ShapeArr);
+		return Obj;
+	}
+
+	TSharedRef<FJsonObject> TerrainPieceToJson(const FZeusTerrainPieceExport& Piece)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("pieceName"),     Piece.PieceName);
+		Obj->SetStringField(TEXT("actorName"),     Piece.ActorName);
+		Obj->SetStringField(TEXT("componentName"), Piece.ComponentName);
+		Obj->SetStringField(TEXT("kind"),          TerrainKindToString(Piece.Kind));
+
+		Obj->SetObjectField(TEXT("region"), RegionToJson(Piece.Region));
+
+		TSharedRef<FJsonObject> Bounds = MakeShared<FJsonObject>();
+		Bounds->SetField(TEXT("center"), Vector3ToJson(Piece.BoundsCenter));
+		Bounds->SetField(TEXT("extent"), Vector3ToJson(Piece.BoundsExtent));
+		Obj->SetObjectField(TEXT("bounds"), Bounds);
+
+		Obj->SetField(TEXT("worldTransform"),
+			MakeShared<FJsonValueObject>(TransformToJson(Piece.WorldTransform)));
+
+		switch (Piece.Kind)
+		{
+		case EZeusTerrainPieceKind::TriangleMesh:
+		{
+			TSharedRef<FJsonObject> Mesh = MakeShared<FJsonObject>();
+			Mesh->SetNumberField(TEXT("vertexCount"), Piece.TriangleMesh.Vertices.Num());
+			Mesh->SetNumberField(TEXT("indexCount"),  Piece.TriangleMesh.Indices.Num());
+			Mesh->SetNumberField(TEXT("triangleCount"), Piece.TriangleMesh.Indices.Num() / 3);
+			Obj->SetObjectField(TEXT("triangleMesh"), Mesh);
+			break;
+		}
+		case EZeusTerrainPieceKind::HeightField:
+		{
+			TSharedRef<FJsonObject> HF = MakeShared<FJsonObject>();
+			HF->SetNumberField(TEXT("samplesX"),       Piece.HeightField.SamplesX);
+			HF->SetNumberField(TEXT("samplesY"),       Piece.HeightField.SamplesY);
+			HF->SetNumberField(TEXT("sampleSpacingCm"), Piece.HeightField.SampleSpacingCm);
+			HF->SetField(TEXT("originLocal"),          Vector3ToJson(Piece.HeightField.OriginLocal));
+			HF->SetNumberField(TEXT("heightScaleCm"),  Piece.HeightField.HeightScaleCm);
+			HF->SetNumberField(TEXT("sampleCount"),    Piece.HeightField.Heights.Num());
+			Obj->SetObjectField(TEXT("heightField"), HF);
+			break;
+		}
+		default: break;
+		}
+		return Obj;
+	}
+
 	TSharedRef<FJsonObject> EntityToJson(const FZeusEntityExport& Entity)
 	{
 		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
@@ -155,6 +263,22 @@ bool FZeusCollisionJsonWriter::Write(const FString& OutputPath,
 	}
 	Root->SetArrayField(TEXT("entities"), EntArr);
 
+	TArray<TSharedPtr<FJsonValue>> VolArr;
+	VolArr.Reserve(Result.Volumes.Num());
+	for (const FZeusVolumeExport& Vol : Result.Volumes)
+	{
+		VolArr.Add(MakeShared<FJsonValueObject>(VolumeToJson(Vol)));
+	}
+	Root->SetArrayField(TEXT("volumes"), VolArr);
+
+	TArray<TSharedPtr<FJsonValue>> TerArr;
+	TerArr.Reserve(Result.TerrainPieces.Num());
+	for (const FZeusTerrainPieceExport& Piece : Result.TerrainPieces)
+	{
+		TerArr.Add(MakeShared<FJsonValueObject>(TerrainPieceToJson(Piece)));
+	}
+	Root->SetArrayField(TEXT("terrainPieces"), TerArr);
+
 	TSharedRef<FJsonObject> Stats = MakeShared<FJsonObject>();
 	Stats->SetNumberField(TEXT("entityCount"),  Result.Stats.EntityCount);
 	Stats->SetNumberField(TEXT("shapeCount"),   Result.Stats.ShapeCount);
@@ -162,6 +286,10 @@ bool FZeusCollisionJsonWriter::Write(const FString& OutputPath,
 	Stats->SetNumberField(TEXT("sphereCount"),  Result.Stats.SphereCount);
 	Stats->SetNumberField(TEXT("capsuleCount"), Result.Stats.CapsuleCount);
 	Stats->SetNumberField(TEXT("convexCount"),  Result.Stats.ConvexCount);
+	Stats->SetNumberField(TEXT("volumeCount"),       Result.Stats.VolumeCount);
+	Stats->SetNumberField(TEXT("terrainPieceCount"), Result.Stats.TerrainPieceCount);
+	Stats->SetNumberField(TEXT("triangleMeshCount"), Result.Stats.TriangleMeshCount);
+	Stats->SetNumberField(TEXT("heightFieldCount"),  Result.Stats.HeightFieldCount);
 	Stats->SetNumberField(TEXT("warningCount"), Result.Stats.WarningCount);
 	Stats->SetNumberField(TEXT("skippedActorCount"), Result.Stats.SkippedActorCount);
 	Root->SetObjectField(TEXT("stats"), Stats);

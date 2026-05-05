@@ -6,17 +6,30 @@
 #include "ZeusCollisionDebugDraw.h"
 #include "ZeusCollisionJsonWriter.h"
 #include "ZeusCollisionBinaryWriter.h"
+#include "ZeusCollisionDynamicWriter.h"
+#include "ZeusCollisionTerrainWriter.h"
 
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "Engine/Selection.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
+#include "Engine/Brush.h"
+#include "Engine/BrushBuilder.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/BrushComponent.h"
+#include "GameFramework/Volume.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "PhysicsEngine/AggregateGeom.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
+#include "Rendering/PositionVertexBuffer.h"
+#include "StaticMeshResources.h"
+#include "Landscape.h"
+#include "LandscapeProxy.h"
+#include "LandscapeComponent.h"
+#include "LandscapeHeightfieldCollisionComponent.h"
+#include "LandscapeInfo.h"
 
 namespace
 {
@@ -42,6 +55,42 @@ namespace
 		const FBoxSphereBounds Bounds = Component->Bounds;
 		OutCenter = Bounds.Origin;
 		OutExtent = Bounds.BoxExtent;
+	}
+
+	bool ActorHasTag(const AActor* Actor, const TCHAR* Tag)
+	{
+		if (!Actor) return false;
+		const FName Needle(Tag);
+		for (const FName& T : Actor->Tags)
+		{
+			if (T == Needle) return true;
+		}
+		return false;
+	}
+
+	FString ExtractEventTag(const AActor* Actor)
+	{
+		if (!Actor) return FString();
+		// Tag no formato "tag:nome" ganha prioridade.
+		for (const FName& T : Actor->Tags)
+		{
+			const FString S = T.ToString();
+			if (S.StartsWith(TEXT("tag:")))
+			{
+				return S.RightChop(4);
+			}
+		}
+		return FString();
+	}
+
+	EZeusVolumeKind DeriveVolumeKind(const AActor* Actor)
+	{
+		if (ActorHasTag(Actor, TEXT("Zeus.Water")))      return EZeusVolumeKind::Water;
+		if (ActorHasTag(Actor, TEXT("Zeus.Lava")))       return EZeusVolumeKind::Lava;
+		if (ActorHasTag(Actor, TEXT("Zeus.KillVolume"))) return EZeusVolumeKind::KillVolume;
+		if (ActorHasTag(Actor, TEXT("Zeus.SafeZone")))   return EZeusVolumeKind::SafeZone;
+		// ATriggerVolume e qualquer AVolume sem tag explicita -> Trigger.
+		return EZeusVolumeKind::Trigger;
 	}
 }
 
@@ -165,6 +214,29 @@ bool FZeusCollisionExporter::ProcessActor(AActor* Actor, const FZeusExportOption
 		return false;
 	}
 
+	// 1) Volumes (AVolume com BrushComponent) -> ZSMD.
+	if (Actor->IsA<AVolume>())
+	{
+		if (ProcessVolumeActor(Actor, Options, InOutResult))
+		{
+			return true;
+		}
+		++InOutResult.Stats.SkippedActorCount;
+		return false;
+	}
+
+	// 2) Landscape (ALandscape ou ALandscapeProxy) -> ZSMT (HeightField).
+	if (Actor->IsA<ALandscapeProxy>())
+	{
+		if (ProcessLandscapeActor(Actor, Options, InOutResult))
+		{
+			return true;
+		}
+		++InOutResult.Stats.SkippedActorCount;
+		return false;
+	}
+
+	// 3) StaticMesh (default + tag Zeus.TriangleMesh).
 	TArray<UStaticMeshComponent*> Components;
 	Actor->GetComponents<UStaticMeshComponent>(Components);
 
@@ -173,6 +245,9 @@ bool FZeusCollisionExporter::ProcessActor(AActor* Actor, const FZeusExportOption
 		++InOutResult.Stats.SkippedActorCount;
 		return false;
 	}
+
+	const bool bForceTriangleMesh = ActorHasTag(Actor, TEXT("Zeus.TriangleMesh"))
+		|| Options.bAllowComplexAsSimple;
 
 	bool bAnyExported = false;
 	for (UStaticMeshComponent* Component : Components)
@@ -185,7 +260,16 @@ bool FZeusCollisionExporter::ProcessActor(AActor* Actor, const FZeusExportOption
 		{
 			continue;
 		}
-		if (ProcessStaticMeshComponent(Actor, Component, Options, InOutResult))
+		bool bExported = false;
+		if (bForceTriangleMesh)
+		{
+			bExported = ProcessTriangleMeshActor(Actor, Component, Options, InOutResult);
+		}
+		if (!bExported)
+		{
+			bExported = ProcessStaticMeshComponent(Actor, Component, Options, InOutResult);
+		}
+		if (bExported)
 		{
 			bAnyExported = true;
 		}
@@ -324,10 +408,14 @@ bool FZeusCollisionExporter::ProcessStaticMeshComponent(AActor* Actor, UStaticMe
 			Shape.Warnings.Add(FString::Printf(TEXT("Convex with too few vertices (%d); skipped."), Verts.Num()));
 			continue;
 		}
+		// Vertices stay in BodySetup/convex local space. Component scale is already
+		// carried by EntityWorldTransform (GetComponentTransform); baking scale
+		// here too would double-apply it in preview (DrawShape) and mismatch ZSM
+		// vs intended hull when only Location/Rotation are used on the server.
 		Shape.Convex.Vertices.Reserve(Verts.Num());
 		for (const FVector& V : Verts)
 		{
-			Shape.Convex.Vertices.Add(FVector(V.X * ComponentScale.X, V.Y * ComponentScale.Y, V.Z * ComponentScale.Z));
+			Shape.Convex.Vertices.Add(V);
 		}
 
 		Entity.Shapes.Add(MoveTemp(Shape));
@@ -346,6 +434,264 @@ bool FZeusCollisionExporter::ProcessStaticMeshComponent(AActor* Actor, UStaticMe
 	++InOutResult.Stats.EntityCount;
 	InOutResult.Entities.Add(MoveTemp(Entity));
 	return true;
+}
+
+bool FZeusCollisionExporter::ProcessVolumeActor(AActor* Actor, const FZeusExportOptions& Options, FZeusExportResult& InOutResult) const
+{
+	AVolume* Volume = Cast<AVolume>(Actor);
+	if (!Volume)
+	{
+		return false;
+	}
+
+	UBrushComponent* Brush = Volume->GetBrushComponent();
+	if (!Brush)
+	{
+		const FString Warning = FString::Printf(TEXT("Volume %s has no BrushComponent; skipped."),
+			*SafeName(Volume));
+		InOutResult.Warnings.Add(Warning);
+		return false;
+	}
+
+	UBodySetup* BrushBodySetup = Brush->BrushBodySetup;
+	const FBoxSphereBounds Bounds = Brush->Bounds;
+
+	FZeusVolumeExport Vol;
+	Vol.VolumeName = Volume->GetActorNameOrLabel();
+	Vol.ActorName = Volume->GetActorNameOrLabel();
+	Vol.Kind = DeriveVolumeKind(Volume);
+	Vol.EventTag = ExtractEventTag(Volume);
+	Vol.WorldTransform = Volume->GetActorTransform();
+	Vol.BoundsCenter = Bounds.Origin;
+	Vol.BoundsExtent = Bounds.BoxExtent;
+	Vol.Region = ComputeRegion(Vol.BoundsCenter, Options.RegionSizeCm);
+
+	const FVector ActorScale = Volume->GetActorScale3D();
+
+	if (BrushBodySetup)
+	{
+		const FKAggregateGeom& Agg = BrushBodySetup->AggGeom;
+		for (const FKBoxElem& Box : Agg.BoxElems)
+		{
+			FZeusShapeExport Shape;
+			Shape.Type = EZeusCollisionShapeType::Box;
+			Shape.LocalTransform = FTransform(Box.Rotation.Quaternion(), Box.Center, FVector::OneVector);
+			Shape.Box.HalfExtents = FVector(
+				static_cast<double>(Box.X) * 0.5 * static_cast<double>(FMath::Abs(ActorScale.X)),
+				static_cast<double>(Box.Y) * 0.5 * static_cast<double>(FMath::Abs(ActorScale.Y)),
+				static_cast<double>(Box.Z) * 0.5 * static_cast<double>(FMath::Abs(ActorScale.Z)));
+			Vol.Shapes.Add(MoveTemp(Shape));
+		}
+		for (const FKSphereElem& Sphere : Agg.SphereElems)
+		{
+			FZeusShapeExport Shape;
+			Shape.Type = EZeusCollisionShapeType::Sphere;
+			Shape.LocalTransform = FTransform(FQuat::Identity, Sphere.Center, FVector::OneVector);
+			Shape.Sphere.Radius = static_cast<double>(Sphere.Radius)
+				* static_cast<double>(FMath::Abs(ActorScale.X));
+			Vol.Shapes.Add(MoveTemp(Shape));
+		}
+		for (const FKSphylElem& Sphyl : Agg.SphylElems)
+		{
+			FZeusShapeExport Shape;
+			Shape.Type = EZeusCollisionShapeType::Capsule;
+			Shape.LocalTransform = FTransform(Sphyl.Rotation.Quaternion(), Sphyl.Center, FVector::OneVector);
+			Shape.Capsule.Radius = static_cast<double>(Sphyl.Radius)
+				* static_cast<double>(FMath::Abs(ActorScale.X));
+			Shape.Capsule.HalfHeight = static_cast<double>(Sphyl.Length) * 0.5
+				* static_cast<double>(FMath::Abs(ActorScale.X));
+			Vol.Shapes.Add(MoveTemp(Shape));
+		}
+	}
+
+	if (Vol.Shapes.Num() == 0)
+	{
+		// Fallback: gera 1 box do BrushComponent's bounds (local).
+		FZeusShapeExport Shape;
+		Shape.Type = EZeusCollisionShapeType::Box;
+		Shape.LocalTransform = FTransform::Identity;
+		const FVector LocalExtent = Bounds.BoxExtent;
+		Shape.Box.HalfExtents = LocalExtent;
+		Vol.Shapes.Add(MoveTemp(Shape));
+	}
+
+	++InOutResult.Stats.VolumeCount;
+	InOutResult.Volumes.Add(MoveTemp(Vol));
+	return true;
+}
+
+bool FZeusCollisionExporter::ProcessTriangleMeshActor(AActor* Actor, UStaticMeshComponent* Component,
+	const FZeusExportOptions& Options, FZeusExportResult& InOutResult) const
+{
+	if (!Actor || !Component)
+	{
+		return false;
+	}
+	UStaticMesh* Mesh = Component->GetStaticMesh();
+	if (!Mesh) return false;
+
+	FStaticMeshRenderData* RenderData = Mesh->GetRenderData();
+	if (!RenderData || RenderData->LODResources.Num() == 0)
+	{
+		const FString Warning = FString::Printf(TEXT("Mesh %s has no RenderData LODs; triangle mesh skipped."),
+			*SafeName(Mesh));
+		InOutResult.Warnings.Add(Warning);
+		return false;
+	}
+	const FStaticMeshLODResources& LOD = RenderData->LODResources[0];
+	const FPositionVertexBuffer& PosBuf = LOD.VertexBuffers.PositionVertexBuffer;
+	const FRawStaticIndexBuffer& IdxBuf = LOD.IndexBuffer;
+	const uint32 NumVerts = PosBuf.GetNumVertices();
+	const int32 NumIndices = IdxBuf.GetNumIndices();
+	if (NumVerts < 3 || NumIndices < 3 || (NumIndices % 3) != 0)
+	{
+		const FString Warning = FString::Printf(TEXT("Mesh %s has invalid LOD0 topology (verts=%u idx=%d); skipped."),
+			*SafeName(Mesh), NumVerts, NumIndices);
+		InOutResult.Warnings.Add(Warning);
+		return false;
+	}
+
+	FZeusTerrainPieceExport Piece;
+	Piece.PieceName = Mesh->GetName();
+	Piece.ActorName = Actor->GetActorNameOrLabel();
+	Piece.ComponentName = Component->GetName();
+	Piece.Kind = EZeusTerrainPieceKind::TriangleMesh;
+	Piece.WorldTransform = Component->GetComponentTransform();
+	const FBoxSphereBounds Bounds = Component->Bounds;
+	Piece.BoundsCenter = Bounds.Origin;
+	Piece.BoundsExtent = Bounds.BoxExtent;
+	Piece.Region = ComputeRegion(Piece.BoundsCenter, Options.RegionSizeCm);
+
+	const FVector Scale = Component->GetComponentScale();
+	Piece.TriangleMesh.Vertices.Reserve(NumVerts);
+	for (uint32 v = 0; v < NumVerts; ++v)
+	{
+		const FVector3f P = PosBuf.VertexPosition(v);
+		// Aplicar scale do componente (rotacao+pos ficam no WorldTransform).
+		Piece.TriangleMesh.Vertices.Add(FVector(
+			static_cast<double>(P.X) * Scale.X,
+			static_cast<double>(P.Y) * Scale.Y,
+			static_cast<double>(P.Z) * Scale.Z));
+	}
+
+	TArray<uint32> Indices32;
+	IdxBuf.GetCopy(Indices32);
+	Piece.TriangleMesh.Indices = MoveTemp(Indices32);
+
+	++InOutResult.Stats.TriangleMeshCount;
+	++InOutResult.Stats.TerrainPieceCount;
+	InOutResult.TerrainPieces.Add(MoveTemp(Piece));
+	return true;
+}
+
+bool FZeusCollisionExporter::ProcessLandscapeActor(AActor* Actor, const FZeusExportOptions& Options,
+	FZeusExportResult& InOutResult) const
+{
+	ALandscapeProxy* Landscape = Cast<ALandscapeProxy>(Actor);
+	if (!Landscape)
+	{
+		return false;
+	}
+	const TArray<TObjectPtr<ULandscapeComponent>>& Components = Landscape->LandscapeComponents;
+	if (Components.Num() == 0)
+	{
+		const FString Warning = FString::Printf(TEXT("Landscape %s has no LandscapeComponents; skipped."),
+			*SafeName(Landscape));
+		InOutResult.Warnings.Add(Warning);
+		return false;
+	}
+
+	bool bAnyPiece = false;
+	for (const TObjectPtr<ULandscapeComponent>& CompPtr : Components)
+	{
+		ULandscapeComponent* LC = CompPtr.Get();
+		if (!LC)
+		{
+			continue;
+		}
+		ULandscapeHeightfieldCollisionComponent* CC = LC->GetCollisionComponent();
+		if (!CC)
+		{
+			InOutResult.Warnings.Add(FString::Printf(
+				TEXT("LandscapeComponent %s has no collision component; skipped."),
+				*SafeName(LC)));
+			continue;
+		}
+
+		// Não chamar GetCollisionSampleInfo(): em builds modulares Win64 o método não é
+		// LANDSCAPE_API e o linker do plugin não resolve o símbolo. A fórmula espelha
+		// ULandscapeHeightfieldCollisionComponent::GetCollisionSampleInfo() no motor.
+		const int32 CollisionSizeVerts = CC->CollisionSizeQuads + 1;
+		const int32 NumSamples = FMath::Square(CollisionSizeVerts);
+
+		if (CollisionSizeVerts < 2 || NumSamples < 4)
+		{
+			InOutResult.Warnings.Add(FString::Printf(
+				TEXT("Landscape collision %s has invalid sample info (verts=%d samples=%d); skipped."),
+				*SafeName(CC), CollisionSizeVerts, NumSamples));
+			continue;
+		}
+
+		const int32 Expected = CollisionSizeVerts * CollisionSizeVerts;
+		if (NumSamples != Expected)
+		{
+			InOutResult.Warnings.Add(FString::Printf(
+				TEXT("Landscape collision %s: NumSamples=%d != verts^2=%d; skipped."),
+				*SafeName(CC), NumSamples, Expected));
+			continue;
+		}
+
+		TArray<float> HeightFloats;
+		HeightFloats.SetNumUninitialized(NumSamples);
+		if (!CC->FillHeightTile(MakeArrayView(HeightFloats), 0, CollisionSizeVerts))
+		{
+			InOutResult.Warnings.Add(FString::Printf(
+				TEXT("FillHeightTile failed for %s; skipped."), *SafeName(CC)));
+			continue;
+		}
+
+		FZeusTerrainPieceExport Piece;
+		Piece.PieceName = LC->GetName();
+		Piece.ActorName = Landscape->GetActorNameOrLabel();
+		Piece.ComponentName = LC->GetName();
+		Piece.Kind = EZeusTerrainPieceKind::HeightField;
+		Piece.WorldTransform = CC->GetComponentTransform();
+
+		const FBoxSphereBounds Bounds = CC->Bounds;
+		Piece.BoundsCenter = Bounds.Origin;
+		Piece.BoundsExtent = Bounds.BoxExtent;
+		Piece.Region = ComputeRegion(Piece.BoundsCenter, Options.RegionSizeCm);
+
+		Piece.HeightField.SamplesX = static_cast<uint32>(CollisionSizeVerts);
+		Piece.HeightField.SamplesY = static_cast<uint32>(CollisionSizeVerts);
+		Piece.HeightField.OriginLocal = FVector::ZeroVector;
+		// FillHeightTile devolve alturas já em cm (delta/local); HeightScaleCm=1 no loader.
+		Piece.HeightField.HeightScaleCm = 1.0;
+
+		FVector LocalSize = CC->CachedLocalBox.GetSize();
+		if (LocalSize.X < KINDA_SMALL_NUMBER || LocalSize.Y < KINDA_SMALL_NUMBER)
+		{
+			LocalSize = Bounds.BoxExtent * 2.0f;
+		}
+		const double Dx = static_cast<double>(LocalSize.X);
+		const double Dy = static_cast<double>(LocalSize.Y);
+		const double Sx = CollisionSizeVerts > 1 ? Dx / static_cast<double>(CollisionSizeVerts - 1) : 100.0;
+		const double Sy = CollisionSizeVerts > 1 ? Dy / static_cast<double>(CollisionSizeVerts - 1) : 100.0;
+		Piece.HeightField.SampleSpacingCm = 0.5 * (Sx + Sy);
+
+		Piece.HeightField.Heights.SetNum(NumSamples);
+		for (int32 i = 0; i < NumSamples; ++i)
+		{
+			Piece.HeightField.Heights[i] = HeightFloats[i];
+		}
+
+		++InOutResult.Stats.HeightFieldCount;
+		++InOutResult.Stats.TerrainPieceCount;
+		InOutResult.TerrainPieces.Add(MoveTemp(Piece));
+		bAnyPiece = true;
+	}
+
+	return bAnyPiece;
 }
 
 void FZeusCollisionExporter::WriteOutputs(const FZeusExportOptions& Options, const FZeusExportResult& Result) const
@@ -384,6 +730,34 @@ void FZeusCollisionExporter::WriteOutputs(const FZeusExportOptions& Options, con
 		else
 		{
 			UE_LOG(LogZeusMapTools, Error, TEXT("[ZeusMapTools] Failed to write ZSM %s"), *ZsmPath);
+		}
+	}
+
+	if (Options.bWriteDynamicZsm && Result.Volumes.Num() > 0)
+	{
+		const FString DynPath = FPaths::Combine(OutDir, TEXT("dynamic_collision.zsm"));
+		if (FZeusCollisionDynamicWriter::Write(DynPath, Result, Options))
+		{
+			UE_LOG(LogZeusMapTools, Log, TEXT("[ZeusMapTools] Wrote %s (%d volumes)"),
+				*DynPath, Result.Volumes.Num());
+		}
+		else
+		{
+			UE_LOG(LogZeusMapTools, Error, TEXT("[ZeusMapTools] Failed to write dynamic ZSM %s"), *DynPath);
+		}
+	}
+
+	if (Options.bWriteTerrainZsm && Result.TerrainPieces.Num() > 0)
+	{
+		const FString TerPath = FPaths::Combine(OutDir, TEXT("terrain_collision.zsm"));
+		if (FZeusCollisionTerrainWriter::Write(TerPath, Result, Options))
+		{
+			UE_LOG(LogZeusMapTools, Log, TEXT("[ZeusMapTools] Wrote %s (%d pieces)"),
+				*TerPath, Result.TerrainPieces.Num());
+		}
+		else
+		{
+			UE_LOG(LogZeusMapTools, Error, TEXT("[ZeusMapTools] Failed to write terrain ZSM %s"), *TerPath);
 		}
 	}
 }

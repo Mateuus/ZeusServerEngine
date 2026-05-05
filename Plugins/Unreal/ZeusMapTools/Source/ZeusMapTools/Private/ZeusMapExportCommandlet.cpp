@@ -39,6 +39,10 @@ int32 UZeusMapExportCommandlet::Main(const FString& Params)
 	const bool bWriteZsm = Switches.Contains(TEXT("BuildZsm")) || Switches.Contains(TEXT("Zsm"));
 	const bool bAllowComplex = Switches.Contains(TEXT("AllowComplexAsSimple"));
 	const bool bValidateOnly = Switches.Contains(TEXT("Validate"));
+	const bool bSkipDynamic = Switches.Contains(TEXT("SkipDynamicZsm")) || Switches.Contains(TEXT("NoDynamicZsm"));
+	const bool bSkipTerrain = Switches.Contains(TEXT("SkipTerrainZsm")) || Switches.Contains(TEXT("NoTerrainZsm"));
+	const bool bForceDynamic = Switches.Contains(TEXT("BuildDynamicZsm")) || Switches.Contains(TEXT("DynamicZsm"));
+	const bool bForceTerrain = Switches.Contains(TEXT("BuildTerrainZsm")) || Switches.Contains(TEXT("TerrainZsm"));
 
 	if (MapPath.IsEmpty())
 	{
@@ -94,6 +98,8 @@ int32 UZeusMapExportCommandlet::Main(const FString& Params)
 	Options.bIncludeSelectedOnly = false;
 	Options.bWriteJson = bWriteJson || (!bWriteJson && !bWriteZsm); // default writes both
 	Options.bWriteZsm = bWriteZsm  || (!bWriteJson && !bWriteZsm);
+	Options.bWriteDynamicZsm = !bSkipDynamic && (bForceDynamic || Options.bWriteJson || Options.bWriteZsm);
+	Options.bWriteTerrainZsm = !bSkipTerrain && (bForceTerrain || Options.bWriteJson || Options.bWriteZsm);
 	Options.bDrawDebug = false;
 	Options.bAllowComplexAsSimple = bAllowComplex;
 	Options.bValidateOnly = bValidateOnly;
@@ -111,9 +117,12 @@ int32 UZeusMapExportCommandlet::Main(const FString& Params)
 	FZeusCollisionExporter Exporter;
 	const FZeusExportResult Result = Exporter.ExportFromWorld(World, Options);
 
+	const int32 TotalExported = Result.Stats.EntityCount + Result.Stats.VolumeCount
+		+ Result.Stats.TerrainPieceCount;
 	UE_LOG(LogZeusMapTools, Log,
-		TEXT("[ZeusMapTools] Commandlet done entities=%d shapes=%d warnings=%d"),
-		Result.Stats.EntityCount, Result.Stats.ShapeCount, Result.Stats.WarningCount);
+		TEXT("[ZeusMapTools] Commandlet done entities=%d volumes=%d terrainPieces=%d shapes=%d warnings=%d"),
+		Result.Stats.EntityCount, Result.Stats.VolumeCount, Result.Stats.TerrainPieceCount,
+		Result.Stats.ShapeCount, Result.Stats.WarningCount);
 
-	return Result.Stats.EntityCount > 0 ? 0 : 4;
+	return TotalExported > 0 ? 0 : 4;
 }
